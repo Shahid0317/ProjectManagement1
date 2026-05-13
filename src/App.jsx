@@ -1,17 +1,20 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import AuthPage from './pages/AuthPage';
+import EmployeePage from './pages/EmployeePage';
+import AdminPage from './pages/AdminPage';
+import SuperadminPage from './pages/SuperadminPage';
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-<h1 class="text-3xl font-bold underline">
-    Hello world!
-  </h1>
-  )
+    <Router>
+      <Routes>
+        <Route path="/" element={<AuthPage />} />
+        <Route path="/superadmin" element={<SuperadminPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/employee" element={<EmployeePage />} />
+      </Routes>
+    </Router>
+  );
 }
 
-export default App
+export default App;
