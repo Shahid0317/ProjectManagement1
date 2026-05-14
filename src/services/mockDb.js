@@ -1,102 +1,133 @@
-// src/services/mockDb.js
+import { auth, db } from './firebase';
+import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc, query, where, getDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
-const PRE_AUTH_KEY = 'project_management_pre_auth';
-const REGISTERED_KEY = 'project_management_registered';
-const PROJECTS_KEY = 'project_management_projects';
-const SUBMISSIONS_KEY = 'project_management_submissions';
+export const initDb = async () => {
+  // Not strictly needed for Firestore, but we can keep it for backwards compatibility if called.
+};
 
-// Initialize the database with a default Superadmin if it's empty
-export const initDb = () => {
-  if (!localStorage.getItem(PRE_AUTH_KEY)) {
-    const defaultSuperAdmin = { id: 'SUP-001', name: 'Super Admin', role: 'superadmin' };
-    localStorage.setItem(PRE_AUTH_KEY, JSON.stringify([defaultSuperAdmin]));
-  }
-  
-  if (!localStorage.getItem(REGISTERED_KEY)) {
-    const defaultSuperAdminAccount = { id: 'SUP-001', name: 'Super Admin', role: 'superadmin', password: 'admin' };
-    localStorage.setItem(REGISTERED_KEY, JSON.stringify([defaultSuperAdminAccount]));
-  }
-
-  if (!localStorage.getItem(PROJECTS_KEY)) {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify([]));
-  }
-
-  if (!localStorage.getItem(SUBMISSIONS_KEY)) {
-    localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify([]));
+// --- PRE-AUTHORIZATION ---
+export const addPreAuthorizedUser = async (email, name, role) => {
+  try {
+    const preAuthRef = collection(db, 'preAuth');
+    const q = query(preAuthRef, where('email', '==', email.toLowerCase()));
+    const snapshot = await getDocs(q);
+    if (!snapshot.empty) {
+      return { success: false, message: 'User Email already pre-authorized.' };
+    }
+    // Use email as doc ID for easy lookup
+    await setDoc(doc(db, 'preAuth', email.toLowerCase()), { 
+      email: email.toLowerCase(), 
+      name, 
+      role,
+      adminEmail: getCurrentUser()?.email || '' // Track who authorized this user
+    });
+    return { success: true, message: 'User pre-authorized successfully.' };
+  } catch (error) {
+    return { success: false, message: error.message };
   }
 };
 
-// Helpers
-const getPreAuth = () => JSON.parse(localStorage.getItem(PRE_AUTH_KEY)) || [];
-const getRegistered = () => JSON.parse(localStorage.getItem(REGISTERED_KEY)) || [];
-export const getProjects = () => JSON.parse(localStorage.getItem(PROJECTS_KEY)) || [];
-export const getSubmissions = () => JSON.parse(localStorage.getItem(SUBMISSIONS_KEY)) || [];
-
-const savePreAuth = (data) => localStorage.setItem(PRE_AUTH_KEY, JSON.stringify(data));
-const saveRegistered = (data) => localStorage.setItem(REGISTERED_KEY, JSON.stringify(data));
-const saveProjects = (data) => localStorage.setItem(PROJECTS_KEY, JSON.stringify(data));
-const saveSubmissions = (data) => localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify(data));
-
-// Pre-authorization (HR/Admin adding users before they register)
-export const addPreAuthorizedUser = (id, name, role) => {
-  const users = getPreAuth();
-  if (users.find(u => u.id === id)) {
-    return { success: false, message: 'User ID already exists in system.' };
+export const removePreAuthorizedUser = async (email) => {
+  try {
+    await deleteDoc(doc(db, 'preAuth', email.toLowerCase()));
+  } catch (error) {
+    console.error("Error removing pre-auth", error);
   }
-  users.push({ id, name, role });
-  savePreAuth(users);
-  return { success: true, message: 'User pre-authorized successfully.' };
 };
 
-export const removePreAuthorizedUser = (id) => {
-  let users = getPreAuth();
-  users = users.filter(u => u.id !== id);
-  savePreAuth(users);
-  
-  // Also remove from registered if they were registered
-  let registered = getRegistered();
-  registered = registered.filter(u => u.id !== id);
-  saveRegistered(registered);
+export const getPreAuthorizedUsersByRole = async (role) => {
+  try {
+    const q = query(collection(db, 'preAuth'), where('role', '==', role));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    return [];
+  }
 };
 
-export const getPreAuthorizedUsersByRole = (role) => {
-  return getPreAuth().filter(u => u.role === role);
-};
+// --- AUTHENTICATION ---
+export const registerUser = async (name, email, password) => {
+  try {
+    // 1. Check if email is in preAuth
+    const preAuthDocRef = doc(db, 'preAuth', email.toLowerCase());
+    const q = query(collection(db, 'preAuth'), where('email', '==', email.toLowerCase()));
+    const snapshot = await getDocs(q);
+    
+    // Check if it's the bootstrap superadmin
+    let isBootstrapSuperadmin = email.toLowerCase() === 'superadmin@123.com';
+    let role = 'employee';
+    let authName = name;
 
-// Registration & Login
-export const registerUser = (name, id, password) => {
-  const preAuth = getPreAuth();
-  const validUser = preAuth.find(u => u.id === id && u.name.toLowerCase() === name.toLowerCase());
+    if (!isBootstrapSuperadmin) {
+      if (snapshot.empty) {
+        return { success: false, message: "Email not pre-authorized. Please contact your Admin." };
+      }
+      const preAuthData = snapshot.docs[0].data();
+      role = preAuthData.role;
+      authName = preAuthData.name; // enforce the pre-authorized name
+    } else {
+      role = 'superadmin';
+    }
 
-  if (!validUser) {
-    return { 
-      success: false, 
-      message: "Data isn't available. Please contact HR or your Admin." 
+    // 2. Create Firebase Auth User
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    // 3. Save to Users collection
+    const userData = {
+      uid: user.uid,
+      email: email.toLowerCase(),
+      name: authName,
+      role: role
     };
-  }
+    await setDoc(doc(db, 'users', user.uid), userData);
 
-  const registered = getRegistered();
-  if (registered.find(u => u.id === id)) {
-    return { success: false, message: 'User is already registered. Please log in.' };
+    return { success: true, message: 'Registered successfully! You can now log in.' };
+  } catch (error) {
+    if (error.code === 'auth/email-already-in-use') {
+      return { success: false, message: 'Email is already registered. Please log in.' };
+    }
+    return { success: false, message: error.message };
   }
-
-  registered.push({ ...validUser, password });
-  saveRegistered(registered);
-  return { success: true, message: 'Registered successfully!' };
 };
 
-export const loginUser = (id, password) => {
-  const registered = getRegistered();
-  const user = registered.find(u => u.id === id && u.password === password);
-  
-  if (user) {
-    // Return user info excluding password
-    const { password, ...userInfo } = user;
-    // Save current logged in user (mocking session)
-    localStorage.setItem('current_user', JSON.stringify(userInfo));
-    return { success: true, user: userInfo };
+export const loginUser = async (email, password) => {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    // Fetch user role from Firestore
+    const userDocRef = collection(db, 'users');
+    const q = query(userDocRef, where('uid', '==', user.uid));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      // Edge case: Auth exists but user doc doesn't.
+      if (email.toLowerCase() === 'superadmin@123.com') {
+        const userData = { uid: user.uid, email: email.toLowerCase(), name: 'Super Admin', role: 'superadmin' };
+        await setDoc(doc(db, 'users', user.uid), userData);
+        localStorage.setItem('current_user', JSON.stringify({ id: email, email, name: 'Super Admin', role: 'superadmin', uid: user.uid }));
+        return { success: true, user: userData };
+      }
+      return { success: false, message: 'User record not found in database.' };
+    }
+
+    const userData = snapshot.docs[0].data();
+    // Maintain localStorage session for simple sync retrieval
+    const sessionData = {
+      id: userData.email, // using email as id for legacy support in components
+      email: userData.email,
+      name: userData.name,
+      role: userData.role,
+      uid: userData.uid
+    };
+    localStorage.setItem('current_user', JSON.stringify(sessionData));
+    
+    return { success: true, user: sessionData };
+  } catch (error) {
+    return { success: false, message: 'Invalid Email or Password.' };
   }
-  return { success: false, message: 'Invalid ID or Password.' };
 };
 
 export const getCurrentUser = () => {
@@ -104,116 +135,167 @@ export const getCurrentUser = () => {
   return user ? JSON.parse(user) : null;
 };
 
-export const logoutUser = () => {
-  localStorage.removeItem('current_user');
-};
-
-// Project Management
-export const assignProject = (adminId, employeeId, projectName, startDate, deadline, budget) => {
-  const projects = getProjects();
-  
-  // Validate if employee exists
-  const employee = getPreAuth().find(u => u.id === employeeId && u.role === 'employee');
-  if (!employee) {
-    return { success: false, message: 'Invalid Employee ID.' };
+export const logoutUser = async () => {
+  try {
+    await signOut(auth);
+    localStorage.removeItem('current_user');
+  } catch(e) {
+    console.error(e);
   }
-
-  const newProject = {
-    id: Date.now().toString(),
-    adminId,
-    employeeId,
-    employeeName: employee.name,
-    projectName,
-    startDate,
-    deadline,
-    budget: budget || '0',
-    status: 'In Progress',
-    paymentStatus: 'Pending'
-  };
-
-  projects.push(newProject);
-  saveProjects(projects);
-  return { success: true, message: 'Project assigned successfully!' };
 };
 
-export const getProjectsByEmployee = (employeeId) => {
-  return getProjects().filter(p => p.employeeId === employeeId);
-};
-
-export const getProjectsByAdmin = (adminId) => {
-  return getProjects().filter(p => p.adminId === adminId);
-};
-
-export const updateProjectStatus = (projectId, status) => {
-  const projects = getProjects();
-  const index = projects.findIndex(p => p.id === projectId);
-  if (index !== -1) {
-    projects[index].status = status;
-    saveProjects(projects);
-    return true;
-  }
-  return false;
-};
-
-export const requestDelayReason = (projectId) => {
-  const projects = getProjects();
-  const index = projects.findIndex(p => p.id === projectId);
-  if (index !== -1) {
-    projects[index].delayReasonRequested = true;
-    saveProjects(projects);
-    return true;
-  }
-  return false;
-};
-
-export const submitDelayReason = (projectId, reason) => {
-  const projects = getProjects();
-  const index = projects.findIndex(p => p.id === projectId);
-  if (index !== -1) {
-    projects[index].delayReason = reason;
-    saveProjects(projects);
-    return true;
-  }
-  return false;
-};
-
-export const getLeaderboard = () => {
-  const projects = getProjects();
-  const employees = getPreAuthorizedUsersByRole('employee');
-  
-  const leaderboardMap = {};
-  
-  // Initialize all employees with 0
-  employees.forEach(emp => {
-    leaderboardMap[emp.id] = {
-      id: emp.id,
-      name: emp.name,
-      completed: 0
-    };
-  });
-
-  // Count completed projects
-  projects.forEach(p => {
-    if (p.status === 'Completed' && leaderboardMap[p.employeeId]) {
-      leaderboardMap[p.employeeId].completed += 1;
+// --- PROJECT MANAGEMENT ---
+export const assignProject = async (adminId, employeeEmails, projectName, startDate, deadline, budget) => {
+  try {
+    const emails = (Array.isArray(employeeEmails) ? employeeEmails : [employeeEmails])
+      .filter(e => e && typeof e === 'string')
+      .map(e => e.toLowerCase().trim());
+    
+    // Validate all employees exist
+    const employeeNames = [];
+    for (const email of emails) {
+      const preAuthRef = doc(db, 'preAuth', email);
+      const preAuthSnap = await getDoc(preAuthRef);
+      
+      if (!preAuthSnap.exists()) {
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('email', '==', email), where('role', '==', 'employee'));
+        const userSnap = await getDocs(q);
+        
+        if (userSnap.empty) {
+          return { success: false, message: `Employee ${email} is not authorized.` };
+        }
+        employeeNames.push(userSnap.docs[0].data().name);
+      } else {
+        employeeNames.push(preAuthSnap.data().name);
+      }
     }
-  });
 
-  // Convert to array and sort descending
-  return Object.values(leaderboardMap).sort((a, b) => b.completed - a.completed);
-};
+    const newProject = {
+      id: Date.now().toString(),
+      adminId,
+      adminEmail: getCurrentUser()?.email || adminId,
+      employeeId: emails, // Stored as array for group support
+      employeeName: employeeNames.join(', '), // Comma separated for display
+      projectName,
+      startDate,
+      deadline,
+      budget: budget || '0',
+      status: 'In Progress',
+      paymentStatus: 'Pending',
+      delayReasonRequested: false,
+      delayReason: ''
+    };
 
-export const updateProjectPayment = (projectId, paymentStatus) => {
-  const projects = getProjects();
-  const index = projects.findIndex(p => p.id === projectId);
-  if (index !== -1) {
-    projects[index].paymentStatus = paymentStatus;
-    saveProjects(projects);
-    return true;
+    await setDoc(doc(db, 'projects', newProject.id), newProject);
+    return { success: true, message: 'Project assigned successfully!' };
+  } catch (error) {
+    return { success: false, message: error.message };
   }
-  return false;
 };
 
+export const getProjects = async () => {
+  try {
+    const snapshot = await getDocs(collection(db, 'projects'));
+    return snapshot.docs.map(doc => doc.data());
+  } catch (error) {
+    return [];
+  }
+};
+
+export const getProjectsByEmployee = async (employeeId) => {
+  try {
+    // We query both legacy (string) and new (array) employeeId formats to ensure all projects show up
+    const q1 = query(collection(db, 'projects'), where('employeeId', '==', employeeId));
+    const q2 = query(collection(db, 'projects'), where('employeeId', 'array-contains', employeeId));
+    
+    const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+    
+    const results = new Map();
+    snap1.docs.forEach(doc => results.set(doc.id, doc.data()));
+    snap2.docs.forEach(doc => results.set(doc.id, doc.data()));
+    
+    return Array.from(results.values());
+  } catch (error) {
+    console.error("Error fetching employee projects:", error);
+    return [];
+  }
+};
+
+export const deleteProject = async (projectId) => {
+  try {
+    await deleteDoc(doc(db, 'projects', projectId));
+    return true;
+  } catch (error) {
+    console.error("Error deleting project:", error);
+    return false;
+  }
+};
+
+export const getProjectsByAdmin = async (adminId) => {
+  try {
+    const q = query(collection(db, 'projects'), where('adminId', '==', adminId));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data());
+  } catch (error) {
+    return [];
+  }
+};
+
+export const updateProjectStatus = async (projectId, status) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { status });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const requestDelayReason = async (projectId) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { delayReasonRequested: true });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const submitDelayReason = async (projectId, reason) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { delayReason: reason });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const updateProjectPayment = async (projectId, paymentStatus) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { paymentStatus });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const saveFinalSubmission = async (projectId, { description, finalImages, finalZipUrl }) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), {
+      finalSubmission: {
+        description,
+        finalImages: finalImages || [],
+        finalZipUrl: finalZipUrl || null,
+        completedAt: new Date().toLocaleDateString()
+      }
+    });
+    return true;
+  } catch (error) {
+    console.error('saveFinalSubmission error:', error);
+    return false;
+  }
+};
+
+// Keeping this synchronous as it just calculates on the frontend
 export const getProjectStatusDynamic = (project) => {
   if (project.status === 'Completed' && project.paymentStatus === 'Received') return 'Closed';
   if (project.status === 'Completed') return 'Completed';
@@ -221,28 +303,149 @@ export const getProjectStatusDynamic = (project) => {
   const deadlineDate = new Date(project.deadline);
   const today = new Date();
   
-  // Strip time for accurate day comparison
   deadlineDate.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
 
   if (today > deadlineDate) {
     return 'Delayed';
   }
-  return project.status; // Usually 'In Progress'
+  return project.status;
 };
 
-export const submitWork = (employeeId, employeeName, projectId, projectName, description, fileName) => {
-  const submissions = getSubmissions();
-  submissions.push({
-    id: Date.now().toString(),
-    employeeId,
-    employeeName,
-    projectId,
-    projectName,
-    description,
-    fileName,
-    date: new Date().toLocaleDateString()
-  });
-  saveSubmissions(submissions);
-  return { success: true, message: 'Work submitted successfully.' };
+export const getDailyTracking = async (year, month, day) => {
+  try {
+    const trackingRef = collection(db, 'yearly_tracking', year.toString(), 'months', month, 'days', day.toString(), 'employees');
+    const snapshot = await getDocs(trackingRef);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("Error fetching daily tracking:", error);
+    return [];
+  }
 };
+
+// --- SUBMISSIONS ---
+export const submitWork = async (employeeId, employeeName, projectId, projectName, description, files) => {
+  try {
+    const submissionId = Date.now().toString();
+    const projectDoc = await getDocs(query(collection(db, 'projects'), where('id', '==', projectId)));
+    const adminEmail = projectDoc.docs[0]?.data()?.adminEmail || '';
+
+    const today = new Date();
+    const yearStr = today.getFullYear().toString();
+    const monthName = today.toLocaleString('default', { month: 'long' }); // e.g., "May"
+    const dayStr = today.getDate().toString(); // e.g., "13"
+    const dateStr = today.toLocaleDateString();
+    const dateISO = today.toISOString().split('T')[0];
+
+    const submissionData = {
+      id: submissionId,
+      employeeId,
+      employeeName,
+      projectId,
+      projectName,
+      adminEmail,
+      description,
+      files: files || [], // Array of { name, url }
+      date: dateStr,
+      timestamp: today.getTime()
+    };
+    
+    // 1. Save to main submissions collection
+    await setDoc(doc(db, 'submissions', submissionId), submissionData);
+
+    const trackingDocRef = doc(db, 'yearly_tracking', yearStr, 'months', monthName, 'days', dayStr, 'employees', employeeId);
+    
+    await setDoc(trackingDocRef, {
+      employeeId,
+      employeeName,
+      year: parseInt(yearStr),
+      month: monthName,
+      day: parseInt(dayStr),
+      date: dateISO,
+      lastUpdate: dateStr,
+      status: 'Worked',
+      projectName,
+      workInfo: description,
+      filesCount: files.length,
+      timestamp: today.getTime()
+    }, { merge: true });
+
+    return { success: true, message: 'Work submitted successfully.' };
+  } catch (error) {
+    console.error("Submit error:", error);
+    return { success: false, message: error.message };
+  }
+};
+
+/**
+ * Checks all employees and marks them as "No Work" for today if they haven't submitted yet.
+ * This should be called by Admins/Superadmins to ensure the tracking table is populated daily.
+ */
+export const markAttendance = async () => {
+  try {
+    const today = new Date();
+    const yearStr = today.getFullYear().toString();
+    const monthName = today.toLocaleString('default', { month: 'long' });
+    const dayStr = today.getDate().toString();
+    const dateStr = today.toLocaleDateString();
+    const dateISO = today.toISOString().split('T')[0];
+
+    // 1. Get all employees
+    const empSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'employee')));
+    const allEmployees = empSnapshot.docs.map(doc => doc.data());
+
+    // 2. For each employee, check if they have a record for today
+    for (const emp of allEmployees) {
+      const docRef = doc(db, 'yearly_tracking', yearStr, 'months', monthName, 'days', dayStr, 'employees', emp.email);
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        await setDoc(docRef, {
+          employeeId: emp.email,
+          employeeName: emp.name,
+          year: parseInt(yearStr),
+          month: monthName,
+          day: parseInt(dayStr),
+          date: dateISO,
+          status: 'No Work',
+          lastUpdate: dateStr,
+          workInfo: 'No work has been done on this day',
+          filesCount: 0,
+          timestamp: today.getTime()
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Attendance check error:", error);
+  }
+};
+
+export const getSubmissions = async (user) => {
+  try {
+    let q;
+    if (user.role === 'superadmin') {
+      // Superadmin sees everything
+      q = collection(db, 'submissions');
+    } else if (user.role === 'admin') {
+      // Admin only sees submissions for projects they assigned
+      q = query(collection(db, 'submissions'), where('adminEmail', '==', user.email));
+    } else {
+      // Employees only see their own submissions
+      q = query(collection(db, 'submissions'), where('employeeId', '==', user.email));
+    }
+    
+    const snapshot = await getDocs(q);
+    const results = snapshot.docs.map(doc => doc.data());
+    
+    if (user.role === 'admin') {
+      console.log(`Admin ${user.email} fetching. Found ${results.length} results.`);
+    }
+
+    return results;
+  } catch (error) {
+    console.error("Error fetching submissions:", error);
+    return [];
+  }
+};
+
+

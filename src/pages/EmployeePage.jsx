@@ -1,295 +1,266 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, CheckCircle, User, Calendar, Briefcase, Image as ImageIcon, AlertTriangle, Send } from 'lucide-react';
-import { getCurrentUser, getProjectsByEmployee, updateProjectStatus, getProjectStatusDynamic, submitWork, submitDelayReason, logoutUser } from '../services/mockDb';
-import Leaderboard from '../components/Leaderboard';
+import { Layout, Briefcase } from 'lucide-react';
+import { 
+  getCurrentUser, getProjectsByEmployee, updateProjectStatus, 
+  submitWork, submitDelayReason, logoutUser, markAttendance, saveFinalSubmission
+} from '../services/mockDb';
+import { uploadToCloudinary } from '../services/cloudinary';
+
+// Components
+import ThemeToggle from '../components/ThemeToggle';
+import EmployeeSidebar from '../components/Employee/EmployeeSidebar';
+import EmployeeStats from '../components/Employee/EmployeeStats';
+import ProjectCard from '../components/Employee/ProjectCard';
+import ProjectBrief from '../components/Employee/ProjectBrief';
+import DailyReportForm from '../components/Employee/DailyReportForm';
+import EmployeeProjectLedger from '../components/Employee/EmployeeProjectLedger';
+
+const isNearDeadline = (deadline) => {
+  if (!deadline) return false;
+  const diff = new Date(deadline) - new Date();
+  const days = diff / (1000 * 60 * 60 * 24);
+  return days >= 0 && days <= 3;
+};
 
 const EmployeePage = () => {
   const navigate = useNavigate();
-  const currentUser = getCurrentUser();
+  const currentUser = React.useMemo(() => getCurrentUser(), []);
 
+  // State
+  const [projects, setProjects] = useState([]);
   const [activeProject, setActiveProject] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
   
-  // Submission State
   const [description, setDescription] = useState('');
-  const [file, setFile] = useState(null);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [zipFile, setZipFile] = useState(null);
+  const [finalZip, setFinalZip] = useState(null);
+  const [finalScreenshots, setFinalScreenshots] = useState([]);
+  const [finalDescription, setFinalDescription] = useState('');
+  
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
 
-  // Delay Reason State
   const [delayReasonText, setDelayReasonText] = useState('');
   const [isDelaySubmitted, setIsDelaySubmitted] = useState(false);
+  const [activeTab, setActiveTab] = useState('dashboard');
 
-  const fetchProjectData = () => {
+  const fetchProjectData = async () => {
     if (currentUser) {
-      const projects = getProjectsByEmployee(currentUser.id);
-      // Find the first project that is not completed, or just the latest one
-      const active = projects.find(p => p.status !== 'Completed');
-      setActiveProject(active || null);
+      const allProjects = await getProjectsByEmployee(currentUser.email);
+      setProjects(allProjects.reverse());
+      if (!activeProject && allProjects.length > 0) {
+        const firstActive = allProjects.find(p => p.status !== 'Completed') || allProjects[0];
+        setActiveProject(firstActive);
+      }
     }
   };
+
+  const filteredProjects = projects.filter(p => {
+    const matchesSearch = p.projectName.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesDate = dateFilter ? (p.startDate === dateFilter || p.deadline === dateFilter) : true;
+    return matchesSearch && matchesDate;
+  });
 
   useEffect(() => {
-    fetchProjectData();
-  }, [currentUser]);
-
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+    if (!currentUser) {
+      navigate('/');
+      return;
     }
+    fetchProjectData();
+    markAttendance();
+  }, []);
+
+  // File Handlers
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files);
+    const images = files.filter(f => f.type.startsWith('image/'));
+    const zips = files.filter(f => f.type.includes('zip'));
+    if (imageFiles.length + images.length > 5) return alert("Max 5 images.");
+    if (zips.length > 1 || (zipFile && zips.length > 0)) return alert("Max 1 zip.");
+    if (images.length > 0) setImageFiles(prev => [...prev, ...images]);
+    if (zips.length > 0) setZipFile(zips[0]);
   };
 
-  const handleSubmit = (e) => {
+  const removeImage = (index) => setImageFiles(prev => prev.filter((_, i) => i !== index));
+  const removeZip = () => setZipFile(null);
+  const removeFinalZip = () => setFinalZip(null);
+
+  const handleFinalZipChange = (e) => {
+    const file = e.target.files[0];
+    if (file && file.type.includes('zip')) setFinalZip(file);
+    else alert("Invalid ZIP.");
+  };
+
+  const handleFinalScreenshotsChange = (e) => {
+    const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
+    if (finalScreenshots.length + files.length > 10) return alert('Max 10 images.');
+    setFinalScreenshots(prev => [...prev, ...files]);
+  };
+
+  const removeFinalScreenshot = (idx) => setFinalScreenshots(prev => prev.filter((_, i) => i !== idx));
+
+  // Submission Handlers
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!activeProject || !currentUser) return;
-    
-    submitWork(
-      currentUser.id, 
-      currentUser.name, 
-      activeProject.id, 
-      activeProject.projectName, 
-      description, 
-      file ? file.name : null
-    );
-
-    setIsSubmitted(true);
-    setTimeout(() => setIsSubmitted(false), 3000);
-    setDescription('');
-    setFile(null);
-  };
-
-  const handleDelayReasonSubmit = (e) => {
-    e.preventDefault();
-    if (activeProject && delayReasonText.trim()) {
-      submitDelayReason(activeProject.id, delayReasonText);
-      setIsDelaySubmitted(true);
-      setTimeout(() => {
-        setIsDelaySubmitted(false);
-        fetchProjectData();
-      }, 1500);
-    }
-  };
-
-  const handleCompleteProject = () => {
-    if (activeProject) {
-      updateProjectStatus(activeProject.id, 'Completed');
+    setIsUploading(true);
+    const uploadedFiles = [];
+    try {
+      for (let i = 0; i < imageFiles.length; i++) {
+        setUploadProgress(`UPLOADING ${i+1}/${imageFiles.length}...`);
+        const url = await uploadToCloudinary(imageFiles[i]);
+        uploadedFiles.push({ name: imageFiles[i].name, url, type: 'image' });
+      }
+      if (zipFile) {
+        setUploadProgress(`UPLOADING ARCHIVE...`);
+        const url = await uploadToCloudinary(zipFile);
+        uploadedFiles.push({ name: zipFile.name, url, type: 'zip' });
+      }
+      setUploadProgress('SYNCING...');
+      await submitWork(currentUser.email, currentUser.name, activeProject.id, activeProject.projectName, description, uploadedFiles);
+      setIsSubmitted(true);
+      setDescription(''); setImageFiles([]); setZipFile(null);
       fetchProjectData();
-      window.location.reload(); 
+      setTimeout(() => setIsSubmitted(false), 3000);
+    } catch (err) { alert("Sync Error"); }
+    finally { setIsUploading(false); setUploadProgress(''); }
+  };
+
+  const handleStatusChange = async (newStatus, projectId = null) => {
+    const targetId = projectId || activeProject?.id;
+    if (!targetId) return;
+    if (!projectId && activeProject) setActiveProject(prev => ({ ...prev, status: newStatus }));
+    await updateProjectStatus(targetId, newStatus);
+    if (newStatus === 'Completed') {
+      const finalImageUrls = [];
+      for (const img of finalScreenshots) {
+        const url = await uploadToCloudinary(img);
+        finalImageUrls.push(url);
+      }
+      let finalZipUrl = finalZip ? await uploadToCloudinary(finalZip) : null;
+      await saveFinalSubmission(targetId, { description: finalDescription, finalImages: finalImageUrls, finalZipUrl });
     }
+    fetchProjectData();
   };
 
-  const handleSignOut = () => {
-    logoutUser();
-    navigate('/');
+  const handleDelaySubmit = async (e) => {
+    e.preventDefault();
+    if (!activeProject) return;
+    await submitDelayReason(activeProject.id, delayReasonText);
+    setIsDelaySubmitted(true);
+    setDelayReasonText('');
+    fetchProjectData();
+    setTimeout(() => setIsDelaySubmitted(false), 3000);
   };
 
-  if (!currentUser) return null;
+  const handleSignOut = () => { logoutUser(); navigate('/'); };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-50 p-6 sm:p-10 relative overflow-hidden">
-      {/* Background aesthetics */}
-      <div className="absolute top-[-10%] right-[-5%] w-[400px] h-[400px] bg-indigo-600 rounded-full blur-[120px] opacity-30 pointer-events-none"></div>
-      <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-600 rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
-
-      <div className="max-w-7xl mx-auto relative z-10 space-y-8">
-        
-        {/* Header Section */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800/50 backdrop-blur-md border border-white/10 rounded-2xl p-6 sm:p-8 shadow-xl">
-          <div className="flex items-center gap-5">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg">
-              <User size={32} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">{currentUser.name}</h1>
-              <p className="text-indigo-400 font-medium text-sm mt-1">Employee • {currentUser.id}</p>
-            </div>
-          </div>
-          <button onClick={handleSignOut} className="mt-4 md:mt-0 text-slate-400 hover:text-white transition-colors text-sm font-medium px-4 py-2 bg-slate-800 rounded-lg border border-white/5 hover:border-white/10">
-            Sign Out
-          </button>
-        </header>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Current Project Details */}
-          <div className="space-y-8">
-            <div className="bg-slate-800/50 backdrop-blur-md border border-white/10 rounded-2xl p-6 sm:p-8 shadow-xl h-full flex flex-col">
-              <div className="flex items-center gap-3 mb-6 shrink-0">
-                <Briefcase className="text-indigo-400" size={24} />
-                <h2 className="text-xl font-semibold">Active Project</h2>
-              </div>
-              
-              {activeProject ? (
-                <div className="space-y-5 flex-1 flex flex-col">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-medium text-white mb-1">{activeProject.projectName}</h3>
-                    <p className="text-xs text-slate-400 mt-1">Assigned by: {activeProject.adminId}</p>
-                  </div>
-                  
-                  <div className="pt-4 border-t border-white/10 shrink-0 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-400 flex items-center gap-2"><Calendar size={14}/> Start</span>
-                      <span className="text-sm font-medium text-white">{activeProject.startDate}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-400 flex items-center gap-2"><Calendar size={14}/> Deadline</span>
-                      <span className="text-sm font-medium text-white">{activeProject.deadline}</span>
-                    </div>
-                    <div className="flex justify-between items-center pt-2 mb-4">
-                      <span className="text-sm text-slate-400">Status</span>
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                        getProjectStatusDynamic(activeProject) === 'Delayed' 
-                          ? 'bg-red-500/20 text-red-400 border-red-500/30' 
-                          : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                      }`}>
-                        {getProjectStatusDynamic(activeProject)}
-                      </span>
-                    </div>
-
-                    {/* Delay Reason Alert UI */}
-                    {activeProject.delayReasonRequested && !activeProject.delayReason && (
-                      <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mt-2">
-                        <div className="flex items-center gap-2 text-red-400 font-medium mb-3">
-                          <AlertTriangle size={18} />
-                          <span className="text-sm">Action Required: Explain Delay</span>
-                        </div>
-                        <p className="text-xs text-slate-300 mb-3">
-                          Your Admin has requested a reason for why this project is delayed past its deadline.
-                        </p>
-                        <form onSubmit={handleDelayReasonSubmit} className="flex gap-2">
-                          <input 
-                            type="text" 
-                            placeholder="Type reason here..."
-                            value={delayReasonText}
-                            onChange={(e) => setDelayReasonText(e.target.value)}
-                            required
-                            className="w-full bg-slate-900/60 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-50 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
-                          />
-                          <button 
-                            type="submit"
-                            disabled={isDelaySubmitted}
-                            className={`p-2 rounded-lg text-white transition-colors flex items-center justify-center shrink-0 ${
-                              isDelaySubmitted ? 'bg-emerald-500' : 'bg-red-500 hover:bg-red-600'
-                            }`}
-                          >
-                            {isDelaySubmitted ? <CheckCircle size={16} /> : <Send size={16} />}
-                          </button>
-                        </form>
-                      </div>
-                    )}
-
-                    {activeProject.delayReason && (
-                      <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 mt-2">
-                        <span className="text-xs text-emerald-400 font-medium block mb-1">You submitted a delay reason:</span>
-                        <p className="text-sm text-slate-300 italic">"{activeProject.delayReason}"</p>
-                      </div>
-                    )}
-
-                    <button 
-                      onClick={handleCompleteProject}
-                      className="w-full mt-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-xl text-sm font-semibold transition-colors flex justify-center items-center gap-2"
-                    >
-                      <CheckCircle size={16} /> Mark as Completed
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-center opacity-70">
-                  <Briefcase size={48} className="text-slate-600 mb-4" />
-                  <p className="text-slate-400 font-medium">No active projects right now.</p>
-                  <p className="text-xs text-slate-500 mt-2">Check back later or contact your admin.</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Work Submission Form */}
-          <div className="bg-slate-800/50 backdrop-blur-md border border-white/10 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col h-[500px]">
-            <h2 className="text-xl font-semibold mb-2 shrink-0">Submit Work Update</h2>
-            <p className="text-sm text-slate-400 mb-6 shrink-0">Log your completed tasks and upload screenshots for the project manager to review.</p>
-            
-            <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-1 flex flex-col">
-              
-              {/* Description */}
-              <div className="space-y-2 flex-1 flex flex-col">
-                <label className="text-sm font-medium text-slate-300">Work Description</label>
-                <textarea 
-                  placeholder="Describe what you accomplished today..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  required
-                  className="w-full flex-1 min-h-[100px] bg-slate-900/60 border border-white/10 rounded-xl p-4 text-[15px] text-slate-50 transition-all duration-300 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 resize-none"
-                ></textarea>
-              </div>
-
-              {/* File Upload */}
-              <div className="space-y-2 shrink-0">
-                <label className="text-sm font-medium text-slate-300">Attach Screenshot</label>
-                <div className="relative border-2 border-dashed border-white/20 rounded-xl bg-slate-900/30 hover:bg-slate-900/50 hover:border-indigo-500/50 transition-all group">
-                  <input 
-                    type="file" 
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  />
-                  <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
-                    <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 group-hover:bg-indigo-500/20 transition-all duration-300">
-                      {file ? <ImageIcon className="text-indigo-400" size={20} /> : <Upload className="text-slate-400 group-hover:text-indigo-400 transition-colors" size={20} />}
-                    </div>
-                    <p className="text-sm font-medium text-slate-300">
-                      {file ? file.name : "Click to upload"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-2 shrink-0">
-                <button 
-                  type="submit" 
-                  disabled={isSubmitted || !activeProject}
-                  className={`w-full py-3.5 px-6 rounded-xl font-semibold text-white flex justify-center items-center gap-2 transition-all duration-300 
-                    ${(!activeProject) ? 'bg-slate-700 opacity-50 cursor-not-allowed' 
-                    : isSubmitted ? 'bg-emerald-500 shadow-emerald-500/30' 
-                    : 'bg-indigo-500 hover:bg-indigo-600 shadow-[0_4px_14px_0_rgba(99,102,241,0.39)] hover:-translate-y-0.5'}`}
-                >
-                  {isSubmitted ? (
-                    <>
-                      <CheckCircle size={20} />
-                      <span>Successfully Submitted</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={20} />
-                      <span>Submit Work</span>
-                    </>
-                  )}
-                </button>
-              </div>
-              
-            </form>
-          </div>
-
-          {/* Leaderboard Component */}
-          <Leaderboard />
-
-        </div>
-      </div>
+    <div className="min-h-screen gradient-mesh flex font-body selection:bg-brand-primary/30 selection:text-white overflow-hidden">
       
-      <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.05);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.3);
-        }
-      `}</style>
+      <div className="fixed inset-0 pointer-events-none opacity-20 overflow-hidden">
+         <div className="absolute -top-[10%] -left-[10%] w-[800px] h-[800px] bg-brand-primary/15 rounded-full blur-[160px] animate-float"></div>
+         <div className="absolute bottom-[20%] right-[5%] w-[600px] h-[600px] bg-brand-secondary/15 rounded-full blur-[140px] animate-float" style={{ animationDelay: '-5s' }}></div>
+      </div>
+
+      <EmployeeSidebar activeTab={activeTab} setActiveTab={setActiveTab} currentUser={currentUser} handleSignOut={handleSignOut} />
+
+      <main className="flex-1 relative z-10 custom-scrollbar overflow-y-auto h-screen bg-slate-950/20 backdrop-blur-3xl">
+         
+         <header className="sticky top-0 z-30 p-8 lg:p-12 flex justify-between items-center bg-slate-950/40 backdrop-blur-2xl border-b border-white/5">
+            <h1 className="text-2xl font-display font-bold text-white tracking-tighter uppercase">
+               {activeTab.replace('_', ' ')} <span className="text-brand-primary">Terminal</span>
+            </h1>
+            <div className="flex items-center gap-6">
+               <ThemeToggle />
+               <div className="h-10 w-px bg-white/10"></div>
+               <div className="flex flex-col items-end text-white">
+                  <p className="text-xs font-bold tabular-nums">{new Date().toLocaleDateString()}</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-1">Operational Sync: 1:1</p>
+               </div>
+            </div>
+         </header>
+
+         <div className="p-8 lg:p-16 max-w-7xl mx-auto">
+            
+            {activeTab === 'dashboard' && (
+              <div className="space-y-16 animate-fadeIn">
+                 <EmployeeStats 
+                   activeCount={projects.filter(p => p.status !== 'Completed').length} 
+                   pendingCount={projects.filter(p => p.delayRequest && !p.delayReason).length} 
+                 />
+                 <section className="space-y-8">
+                    <h2 className="text-xl font-bold text-white tracking-tight">Active Project Sector</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                       {projects.length === 0 ? (
+                         <div className="col-span-full py-20 glass-card flex flex-col items-center justify-center opacity-30">
+                            <Briefcase size={48} className="mb-4 text-white" />
+                            <p className="text-[10px] font-black uppercase tracking-[0.5em] text-white">No Projects Assigned</p>
+                         </div>
+                       ) : (
+                         projects.map((p) => (
+                           <ProjectCard 
+                             key={p.id} project={p} isNearDeadline={isNearDeadline} 
+                             handleStatusChange={handleStatusChange} 
+                             setActiveProject={setActiveProject} setActiveTab={setActiveTab} 
+                           />
+                         ))
+                       )}
+                    </div>
+                 </section>
+              </div>
+            )}
+
+            {activeTab === 'work' && (
+              <div className="animate-fadeIn">
+                 {activeProject ? (
+                    <div className="grid grid-cols-1 xl:grid-cols-5 gap-10">
+                       <ProjectBrief 
+                         activeProject={activeProject} handleStatusChange={handleStatusChange} 
+                         delayReasonText={delayReasonText} setDelayReasonText={setDelayReasonText} 
+                         handleDelaySubmit={handleDelaySubmit} 
+                       />
+                       <DailyReportForm 
+                         description={description} setDescription={setDescription} 
+                         imageFiles={imageFiles} handleFileChange={handleFileChange} removeImage={removeImage} 
+                         zipFile={zipFile} removeZip={removeZip} 
+                         finalDescription={finalDescription} setFinalDescription={setFinalDescription} 
+                         finalScreenshots={finalScreenshots} handleFinalScreenshotsChange={handleFinalScreenshotsChange} removeFinalScreenshot={removeFinalScreenshot} 
+                         finalZip={finalZip} handleFinalZipChange={handleFinalZipChange} removeFinalZip={removeFinalZip} 
+                         isUploading={isUploading} uploadProgress={uploadProgress} isSubmitted={isSubmitted} 
+                         handleSubmit={handleSubmit} activeProject={activeProject} 
+                       />
+                    </div>
+                 ) : (
+                    <div className="glass-card p-32 text-center opacity-30 flex flex-col items-center space-y-6">
+                       <Layout size={64} className="text-white" />
+                       <h3 className="text-2xl font-bold text-white uppercase tracking-tighter">Terminal Offline</h3>
+                       <button onClick={() => setActiveTab('dashboard')} className="px-10 py-4 bg-brand-primary text-white rounded-[2rem] font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all">Go to Project Sector</button>
+                    </div>
+                 )}
+              </div>
+            )}
+
+            {activeTab === 'archive' && (
+              <EmployeeProjectLedger 
+                filteredProjects={filteredProjects} searchTerm={searchTerm} setSearchTerm={setSearchTerm} 
+                setActiveProject={setActiveProject} setActiveTab={setActiveTab} 
+              />
+            )}
+
+            <footer className="mt-20 pt-12 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-8 opacity-20 pb-16 text-white">
+               <p className="text-[11px] font-black uppercase tracking-[0.5em]">Employee Nexus Terminal v9.0.4</p>
+               <div className="flex gap-12 text-[10px] font-black uppercase tracking-widest">
+                  <span>Connection: Secure</span>
+                  <span>Encryption: RSA-4096</span>
+               </div>
+            </footer>
+         </div>
+      </main>
     </div>
   );
 };
