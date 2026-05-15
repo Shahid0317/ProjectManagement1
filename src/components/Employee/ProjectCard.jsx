@@ -8,16 +8,19 @@ const ProjectCard = ({
   setActiveProject, 
   setActiveTab 
 }) => {
-  const nearDeadline = project.status === 'Ongoing' && isNearDeadline(project.deadline);
+  const nearDeadline = project.status === 'Ongoing' && typeof isNearDeadline === 'function' && isNearDeadline(project.deadline);
   
   return (
-    <div className={`glass-card group transition-all duration-500 overflow-hidden flex flex-col relative ${
+    <div 
+      onClick={() => { setActiveProject(project); setActiveTab('work'); }}
+      className={`glass-card group transition-all duration-500 overflow-hidden flex flex-col relative cursor-pointer ${
         project.status === 'Completed'
           ? 'border-emerald-500/40 shadow-[0_0_30px_rgba(16,185,129,0.12)]'
           : nearDeadline
             ? 'border-red-500/40 shadow-[0_0_30px_rgba(239,68,68,0.12)]'
             : 'hover:border-brand-primary/40'
-      }`}>
+      }`}
+    >
       {project.status === 'Completed' && (
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-emerald-600 opacity-80"></div>
       )}
@@ -37,7 +40,7 @@ const ProjectCard = ({
                {nearDeadline && <AlertTriangle size={8} className="animate-pulse" />}
                {project.status}
             </span>
-            <p className="text-[10px] font-bold text-slate-500 tabular-nums">ID: {project.id.substring(0, 8)}</p>
+            <p className="text-[10px] font-bold text-slate-500 tabular-nums">ID: {String(project.id).substring(0, 8)}</p>
          </div>
          <h3 className={`text-xl font-bold tracking-tight mb-4 uppercase leading-tight transition-colors ${
             project.status === 'Completed' ? 'text-emerald-400' : nearDeadline ? 'text-red-400' : 'text-white group-hover:text-brand-primary'

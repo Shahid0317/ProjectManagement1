@@ -7,7 +7,7 @@ export const initDb = async () => {
 };
 
 // --- PRE-AUTHORIZATION ---
-export const addPreAuthorizedUser = async (email, name, role) => {
+export const addPreAuthorizedUser = async (email, name, role, phone = '', jobRole = '', domain = '') => {
   try {
     const preAuthRef = collection(db, 'preAuth');
     const q = query(preAuthRef, where('email', '==', email.toLowerCase()));
@@ -20,6 +20,9 @@ export const addPreAuthorizedUser = async (email, name, role) => {
       email: email.toLowerCase(), 
       name, 
       role,
+      phone,
+      jobRole,
+      domain,
       adminEmail: getCurrentUser()?.email || '' // Track who authorized this user
     });
     return { success: true, message: 'User pre-authorized successfully.' };
@@ -145,15 +148,25 @@ export const logoutUser = async () => {
 };
 
 // --- PROJECT MANAGEMENT ---
-export const assignProject = async (adminId, employeeEmails, projectName, startDate, deadline, budget) => {
+export const assignProject = async (adminId, employeeEmails, projectName, description, startDate, deadline, budget) => {
   try {
     const emails = (Array.isArray(employeeEmails) ? employeeEmails : [employeeEmails])
       .filter(e => e && typeof e === 'string')
       .map(e => e.toLowerCase().trim());
     
-    // Validate all employees exist
+    // Validate all employees exist & Check Workload Limit
     const employeeNames = [];
     for (const email of emails) {
+      // Check Workload
+      const activeProjects = await getProjectsByEmployee(email);
+      const pendingCount = activeProjects.filter(p => p.status !== 'Completed').length;
+      if (pendingCount >= 5) {
+        return { 
+          success: false, 
+          message: `Mission Aborted: ${email} has reached the maximum capacity of 5 active projects.` 
+        };
+      }
+
       const preAuthRef = doc(db, 'preAuth', email);
       const preAuthSnap = await getDoc(preAuthRef);
       
@@ -178,6 +191,7 @@ export const assignProject = async (adminId, employeeEmails, projectName, startD
       employeeId: emails, // Stored as array for group support
       employeeName: employeeNames.join(', '), // Comma separated for display
       projectName,
+      description,
       startDate,
       deadline,
       budget: budget || '0',
@@ -448,4 +462,110 @@ export const getSubmissions = async (user) => {
   }
 };
 
+// --- REGISTRATION REQUESTS ---
+export const submitRegistrationRequest = async (email, name, phone, jobRole, domain, gender, address, bio) => {
+  try {
+    const regRef = collection(db, 'registrationRequests');
+    const q = query(regRef, where('email', '==', email.toLowerCase()));
+    const snapshot = await getDocs(q);
+    if (!snapshot.empty) {
+      return { success: false, message: 'Registration request already submitted for this email.' };
+    }
+    
+    // Also check if already pre-authorized or registered
+    const preAuthRef = doc(db, 'preAuth', email.toLowerCase());
+    const preAuthSnap = await getDoc(preAuthRef);
+    if (preAuthSnap.exists()) {
+      return { success: false, message: 'This email is already authorized. Please go to the Signup page.' };
+    }
 
+    await setDoc(doc(db, 'registrationRequests', email.toLowerCase()), {
+      email: email.toLowerCase(),
+      name,
+      phone: phone || 'Not Provided',
+      jobRole: jobRole || 'Not Specified',
+      domain: domain || 'Not Specified',
+      gender: gender || 'Not Specified',
+      address: address || 'Not Provided',
+      bio: bio || 'No additional information provided',
+      status: 'pending',
+      timestamp: Date.now()
+    });
+    return { success: true, message: 'Registration request submitted successfully. Please wait for Admin approval.' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};
+
+export const getPendingRegistrations = async () => {
+  try {
+    const q = query(collection(db, 'registrationRequests'), where('status', '==', 'pending'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    return [];
+  }
+};
+
+export const approveRegistrationRequest = async (name, email, adminEmail) => {
+  try {
+    // 1. Add to preAuth
+    const result = await addPreAuthorizedUser(email, name, 'employee');
+    if (!result.success) return result;
+
+    // Save who approved this user
+    await updateDoc(doc(db, 'preAuth', email.toLowerCase()), {
+      approvedBy: adminEmail,
+      approvedAt: new Date().toLocaleDateString()
+    });
+
+    // 2. Delete the request
+    await deleteDoc(doc(db, 'registrationRequests', email.toLowerCase()));
+    return { success: true, message: 'Request approved and user pre-authorized.' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};
+
+export const declineRegistrationRequest = async (email) => {
+  try {
+    await deleteDoc(doc(db, 'registrationRequests', email.toLowerCase()));
+    return { success: true, message: 'Registration request declined.' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};
+
+export const getTeamSubmissionStatus = async (projectId, memberEmails) => {
+  try {
+    const todayStr = new Date().toLocaleDateString();
+    const q = query(
+      collection(db, 'submissions'), 
+      where('projectId', '==', projectId),
+      where('date', '==', todayStr)
+    );
+    const snapshot = await getDocs(q);
+    const submissions = snapshot.docs.map(doc => doc.data());
+    
+    return memberEmails.map(email => {
+      const submission = submissions.find(s => s.employeeId === email);
+      return {
+        email,
+        name: submission ? submission.employeeName : email.split('@')[0],
+        submitted: !!submission
+      };
+    });
+  } catch (error) {
+    console.error("Error fetching team status:", error);
+    return [];
+  }
+};
+
+export const updateProjectPaymentStatus = async (projectId, status) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { paymentStatus: status });
+    return { success: true, message: `Project payment status updated to ${status}.` };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};

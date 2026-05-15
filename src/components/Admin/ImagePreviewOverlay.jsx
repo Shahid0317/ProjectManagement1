@@ -10,7 +10,7 @@ const ImagePreviewOverlay = ({ selectedImage, setSelectedImage }) => {
         className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl"
         onClick={() => setSelectedImage(null)}
       ></div>
-      <div className="relative glass-card !bg-slate-900/60 p-3 max-w-6xl w-full animate-zoomIn border-white/20 shadow-glow">
+      <div className="relative glass-card bg-surface-main p-3 max-w-6xl w-full animate-zoomIn border-white/20 shadow-glow">
         <button 
           onClick={() => setSelectedImage(null)}
           className="absolute -top-6 -right-6 p-5 bg-brand-primary text-white rounded-[2rem] shadow-2xl hover:bg-white hover:text-brand-primary transition-all duration-500 hover:scale-110 z-10"

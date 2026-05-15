@@ -3,9 +3,9 @@ import { Briefcase, AlertTriangle, Calendar } from 'lucide-react';
 
 const EmployeeStats = ({ activeCount, pendingCount }) => {
   const stats = [
-    { label: 'Active Projects', value: activeCount, icon: Briefcase, color: 'brand-primary' },
-    { label: 'Pending Projects', value: pendingCount, icon: AlertTriangle, color: 'brand-accent' },
-    { label: 'Operational Days', value: '14', icon: Calendar, color: 'brand-secondary' }
+    { label: 'Active Projects', value: activeCount || 0, icon: Briefcase, color: 'brand-primary' },
+    { label: 'Pending Projects', value: pendingCount || 0, icon: AlertTriangle, color: 'brand-accent' },
+    { label: 'Working Days', value: '14', icon: Calendar, color: 'brand-secondary' }
   ];
 
   return (

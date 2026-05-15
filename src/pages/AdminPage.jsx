@@ -1,49 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout } from 'lucide-react';
 import { 
-  addPreAuthorizedUser, getPreAuthorizedUsersByRole, removePreAuthorizedUser, 
-  assignProject, getCurrentUser, getProjects, getSubmissions, 
-  getProjectsByAdmin, logoutUser, markAttendance, getDailyTracking, deleteProject
+  getProjectsByAdmin, 
+  getPreAuthorizedUsersByRole, 
+  addPreAuthorizedUser, 
+  removePreAuthorizedUser,
+  logoutUser,
+  assignProject,
+  deleteProject,
+  updateProjectStatus,
+  requestDelayReason,
+  getSubmissions,
+  getCurrentUser,
+  markAttendance,
+  getDailyTracking,
+  getPendingRegistrations,
+  approveRegistrationRequest,
+  declineRegistrationRequest,
+  getProjects
 } from '../services/mockDb';
-
-// Components
 import ThemeToggle from '../components/ThemeToggle';
+import { Menu } from 'lucide-react';
+
+// Component Imports
 import AdminSidebar from '../components/Admin/AdminSidebar';
-import StatCards from '../components/Admin/StatCards';
-import DailyReportFeed from '../components/Admin/DailyReportFeed';
 import PersonnelManager from '../components/Admin/PersonnelManager';
 import ProjectAssignmentForm from '../components/Admin/ProjectAssignmentForm';
 import ProjectLedger from '../components/Admin/ProjectLedger';
 import AttendanceLog from '../components/Admin/AttendanceLog';
 import ImagePreviewOverlay from '../components/Admin/ImagePreviewOverlay';
+import StatCards from '../components/Admin/StatCards';
+import DailyReportFeed from '../components/Admin/DailyReportFeed';
+import ErrorBoundary from '../components/ErrorBoundary';
+import LoadingOverlay from '../components/LoadingOverlay';
 
 const AdminPage = () => {
   const navigate = useNavigate();
-  const currentUser = React.useMemo(() => getCurrentUser(), []);
-  
-  // State
-  const [employees, setEmployees] = useState([]);
-  const [newEmpName, setNewEmpName] = useState('');
-  const [newEmpEmail, setNewEmpEmail] = useState('');
-  const [empMsg, setEmpMsg] = useState({ text: '', type: '' });
   const [activeTab, setActiveTab] = useState('overview');
+  const [projects, setProjects] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [subProjects, setSubProjects] = useState([]);
+  const [pendingRegs, setPendingRegs] = useState([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Personnel Management State
+  const [newEmpEmail, setNewEmpEmail] = useState('');
+  const [newEmpName, setNewEmpName] = useState('');
+  const [empMsg, setEmpMsg] = useState({ text: '', type: '' });
 
-  const [projectData, setProjectData] = useState({
-    employeeEmail: '',
-    projectName: '',
-    startDate: '',
+  // Project Assignment State
+  const [assignForm, setAssignForm] = useState({ 
+    projectName: '', 
+    description: '',
+    employeeEmail: '', // for individual
+    employeeEmails: [], // for group
+    startDate: '', 
     deadline: '',
     budget: '',
     isGroup: false
   });
-  const [selectedEmails, setSelectedEmails] = useState([]);
   const [assignMsg, setAssignMsg] = useState({ text: '', type: '' });
-  const [isAssigning, setIsAssigning] = useState(false);
 
-  const [activeProjectsCount, setActiveProjectsCount] = useState(0);
-  const [subProjects, setSubProjects] = useState([]);
-  const [adminProjects, setAdminProjects] = useState([]);
+  // Ledger/Daily Log State
+  const [expandedProject, setExpandedProject] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [logDate, setLogDate] = useState({
     year: new Date().getFullYear(),
@@ -51,20 +72,33 @@ const AdminPage = () => {
     day: new Date().getDate()
   });
   const [dailyLogs, setDailyLogs] = useState([]);
-  const [expandedProject, setExpandedProject] = useState(null);
 
-  const fetchDashboardData = async () => {
-    setEmployees(await getPreAuthorizedUsersByRole('employee'));
-    const allProjects = await getProjects();
-    const active = allProjects.filter(p => p.status !== 'Completed').length;
-    setActiveProjectsCount(active);
-    
-    if (currentUser) {
-      const allSubProjects = await getSubmissions(currentUser);
-      setSubProjects(allSubProjects.reverse());
-      const myProjects = await getProjectsByAdmin(currentUser.id);
-      setAdminProjects(myProjects.reverse());
-    }
+  const currentUser = React.useMemo(() => getCurrentUser(), []);
+
+  const fetchData = async () => {
+    if (!currentUser) return;
+    setIsLoading(true);
+    const [adminProjects, allProjects, employeeData, submissions, regs] = await Promise.all([
+      getProjectsByAdmin(currentUser.id),
+      getProjects(),
+      getPreAuthorizedUsersByRole('employee'),
+      getSubmissions(currentUser),
+      getPendingRegistrations()
+    ]);
+
+    const enrichedEmployees = employeeData.map(emp => {
+      const activeCount = allProjects.filter(p => 
+        (Array.isArray(p.employeeId) ? p.employeeId.includes(emp.email) : p.employeeId === emp.email) && 
+        p.status !== 'Completed'
+      ).length;
+      return { ...emp, activeProjectCount: activeCount };
+    });
+
+    setProjects(adminProjects);
+    setEmployees(enrichedEmployees);
+    setSubProjects(submissions.reverse());
+    setPendingRegs(regs);
+    setIsLoading(false);
   };
 
   const fetchDailyLogs = async () => {
@@ -73,98 +107,103 @@ const AdminPage = () => {
   };
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || currentUser.role !== 'admin') {
       navigate('/');
       return;
     }
-    fetchDashboardData();
+    fetchData();
     markAttendance();
-  }, []);
+  }, [currentUser, navigate]);
 
   useEffect(() => {
     fetchDailyLogs();
   }, [logDate]);
 
+  // Personnel Handlers
   const handleAddEmployee = async (e) => {
     e.preventDefault();
     const result = await addPreAuthorizedUser(newEmpEmail, newEmpName, 'employee');
     setEmpMsg({ text: result.message, type: result.success ? 'success' : 'error' });
     if (result.success) {
-      setNewEmpName('');
       setNewEmpEmail('');
-      fetchDashboardData();
+      setNewEmpName('');
+      fetchData();
     }
-    setTimeout(() => setEmpMsg({ text: '', type: '' }), 3000);
   };
 
-  const handleRemoveEmployee = async (id) => {
-    await removePreAuthorizedUser(id);
-    fetchDashboardData();
+  const handleRemoveEmployee = async (email) => {
+    if (window.confirm("Are you sure you want to revoke access for this employee?")) {
+      await removePreAuthorizedUser(email);
+      fetchData();
+    }
   };
 
-  const handleDeleteProject = async (id, e) => {
-    e.stopPropagation();
-    if (window.confirm("Are you sure you want to permanently delete this project record?")) {
-      await deleteProject(id);
-      fetchDashboardData();
-    }
+  const handleApproveReg = async (name, email) => {
+    const res = await approveRegistrationRequest(name, email, currentUser.email);
+    if (res.success) fetchData();
+    else alert(res.message);
+  };
+
+  const handleDeclineReg = async (email) => {
+    const res = await declineRegistrationRequest(email);
+    if (res.success) fetchData();
+  };
+
+  // Project Handlers
+  const handleProjectChange = (e) => {
+    const { name, value } = e.target;
+    setAssignForm(prev => ({ ...prev, [name]: value }));
   };
 
   const handleAssignProject = async (e) => {
     e.preventDefault();
-    if (!currentUser || isAssigning) return;
-
     setIsAssigning(true);
-    try {
-      const result = await assignProject(
-        currentUser.email,
-        projectData.isGroup ? selectedEmails : [projectData.employeeEmail], 
-        projectData.projectName, 
-        projectData.startDate, 
-        projectData.deadline, 
-        projectData.budget
-      );
-      if (result.success) {
-        setAssignMsg({ text: 'Project Assigned Successfully', type: 'success' });
-        setProjectData({ employeeEmail: '', projectName: '', startDate: '', deadline: '', budget: '', isGroup: false });
-        setSelectedEmails([]);
-        fetchDashboardData();
-        setTimeout(() => setAssignMsg({ text: '', type: '' }), 3000);
-      } else {
-        setAssignMsg({ text: result.message, type: 'error' });
-        setTimeout(() => setAssignMsg({ text: '', type: '' }), 3000);
-      }
-    } catch (err) {
-      setAssignMsg({ text: 'Deployment Error', type: 'error' });
-    } finally {
-      setIsAssigning(false);
+    
+    const finalEmails = assignForm.isGroup ? assignForm.employeeEmails : [assignForm.employeeEmail];
+    
+    const result = await assignProject(
+      currentUser.id, 
+      finalEmails, 
+      assignForm.projectName, 
+      assignForm.description,
+      assignForm.startDate, 
+      assignForm.deadline,
+      assignForm.budget
+    );
+    
+    setAssignMsg({ text: result.message, type: result.success ? 'success' : 'error' });
+    setIsAssigning(false);
+    
+    if (result.success) {
+      setAssignForm({ 
+        projectName: '', 
+        description: '',
+        employeeEmail: '', 
+        employeeEmails: [], 
+        startDate: '', 
+        deadline: '', 
+        budget: '',
+        isGroup: false 
+      });
+      fetchData();
     }
   };
 
-  const handleProjectChange = (e) => {
-    setProjectData({ ...projectData, [e.target.name]: e.target.value });
+  const handleDeleteProject = async (id) => {
+    if (window.confirm("Permanently delete this project?")) {
+      await deleteProject(id);
+      fetchData();
+    }
   };
 
-  const handleFileAction = async (e, file) => {
-    e.preventDefault();
-    if (file.type === 'zip') {
-      try {
-        const response = await fetch(file.url);
-        const blob = await response.blob();
-        const blobUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.setAttribute('download', file.name || 'download.zip');
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(blobUrl);
-      } catch (err) {
-        window.open(file.url, '_blank');
-      }
-    } else {
-      setSelectedImage(file.url);
-    }
+  const handleUpdateStatus = async (id, status) => {
+    await updateProjectStatus(id, status);
+    fetchData();
+  };
+
+  const handleRequestDelay = async (id) => {
+    await requestDelayReason(id);
+    fetchData();
   };
 
   const handleSignOut = () => {
@@ -172,125 +211,149 @@ const AdminPage = () => {
     navigate('/');
   };
 
-  return (
-    <div className="min-h-screen gradient-mesh flex font-body selection:bg-brand-secondary/30 selection:text-white overflow-hidden">
-      
-      {/* Absolute Background Master Elements */}
-      <div className="fixed inset-0 pointer-events-none opacity-20 overflow-hidden">
-         <div className="absolute -top-[10%] -left-[10%] w-[800px] h-[800px] bg-brand-secondary/15 rounded-full blur-[160px] animate-float"></div>
-         <div className="absolute top-[40%] right-[10%] w-[600px] h-[600px] bg-brand-primary/15 rounded-full blur-[140px] animate-float" style={{ animationDelay: '-5s' }}></div>
-      </div>
+  const handleFileAction = async (e, file) => {
+    if (e) e.preventDefault();
+    if (!file || !file.url) return;
 
+    const type = file.type || (file.url.toLowerCase().endsWith('.zip') ? 'zip' : 'image');
+    
+    if (type === 'zip') {
+      try {
+        const response = await fetch(file.url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = file.name || 'project_archive.zip';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        window.location.href = file.url;
+      }
+    } else {
+      setSelectedImage(file.url);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex font-body selection:bg-brand-primary/30 selection:text-white overflow-hidden bg-main">
+      
       <AdminSidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
         currentUser={currentUser} 
-        handleSignOut={handleSignOut} 
+        handleSignOut={handleSignOut}
+        isOpen={isSidebarOpen}
+        setIsOpen={setIsSidebarOpen}
       />
+      {isLoading && <LoadingOverlay message="Synchronizing Administration Terminal..." />}
 
-      {/* Main Core */}
-      <main className="flex-1 relative z-10 custom-scrollbar overflow-y-auto h-screen bg-slate-950/20 backdrop-blur-3xl">
+      <main className="flex-1 relative z-10 custom-scrollbar overflow-y-auto h-screen bg-surface-main backdrop-blur-3xl">
          
-         {/* Top Header */}
-         <header className="sticky top-0 z-30 p-8 lg:p-12 flex justify-between items-center bg-slate-950/40 backdrop-blur-2xl border-b border-white/5">
-            <div className="flex items-center gap-8">
-               <h1 className="text-2xl font-display font-bold text-white tracking-tighter capitalize">
-                  {activeTab} <span className="text-brand-primary">Terminal</span>
+         <header className="sticky top-0 z-50 px-6 py-6 lg:px-12 flex justify-between items-center bg-header backdrop-blur-3xl border-b border-white/5 shadow-sm">
+            <div className="flex-1 lg:hidden">
+               <button onClick={() => setIsSidebarOpen(true)} className="text-slate-400 hover:text-white transition-colors">
+                  <Menu size={24} />
+               </button>
+            </div>
+            <div className="hidden lg:block flex-1"></div>
+            
+            <div className="flex items-center justify-center flex-1">
+               <h1 className="text-2xl lg:text-3xl font-display font-bold text-heading tracking-tighter capitalize whitespace-nowrap">
+                  Admin <span className="text-brand-primary">Dashboard</span>
                </h1>
             </div>
 
-            <div className="flex items-center gap-6">
+            <div className="flex items-center justify-end gap-4 lg:gap-6 flex-1">
                <ThemeToggle />
-               <div className="h-10 w-px bg-white/10"></div>
-               <div className="flex flex-col items-end">
-                  <p className="text-xs font-bold text-white tabular-nums">{new Date().toLocaleDateString()}</p>
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-1">Command Ops Sync</p>
+               <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
+               <div className="hidden sm:flex flex-col items-end">
+                  <p className="text-[10px] font-bold text-heading tabular-nums">{new Date().toLocaleDateString()}</p>
+                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Active Session</p>
                </div>
             </div>
          </header>
 
-         <div className="p-8 lg:p-16 max-w-7xl mx-auto">
+         <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-10">
             
-            {/* TAB: OVERVIEW */}
             {activeTab === 'overview' && (
-              <div className="space-y-16 animate-fadeIn">
+              <div className="animate-fadeIn space-y-10">
                  <StatCards 
-                    activeProjectsCount={activeProjectsCount}
-                    subProjectsCount={subProjects.length}
-                    adminProjectsCount={adminProjects.length}
-                    employeesCount={employees.length}
-                 />
-
-                 <DailyReportFeed 
+                    projects={projects}
                     subProjects={subProjects}
-                    handleFileAction={handleFileAction}
+                    onTabChange={setActiveTab}
                  />
+                 <div className="grid grid-cols-1 gap-10">
+                    <DailyReportFeed 
+                       subProjects={subProjects}
+                       handleFileAction={handleFileAction}
+                    />
+                 </div>
               </div>
             )}
 
-            {/* TAB: PERSONNEL */}
             {activeTab === 'employees' && (
-              <PersonnelManager 
-                employees={employees}
-                newEmpEmail={newEmpEmail}
-                setNewEmpEmail={setNewEmpEmail}
-                newEmpName={newEmpName}
-                setNewEmpName={setNewEmpName}
-                empMsg={empMsg}
-                handleAddEmployee={handleAddEmployee}
-                handleRemoveEmployee={handleRemoveEmployee}
-              />
+              <ErrorBoundary>
+                <PersonnelManager 
+                   employees={employees}
+                   pendingRegs={pendingRegs}
+                   newEmpEmail={newEmpEmail}
+                   setNewEmpEmail={setNewEmpEmail}
+                   newEmpName={newEmpName}
+                   setNewEmpName={setNewEmpName}
+                   empMsg={empMsg}
+                   handleAddEmployee={handleAddEmployee}
+                   handleRemoveEmployee={handleRemoveEmployee}
+                   handleApproveReg={handleApproveReg}
+                   handleDeclineReg={handleDeclineReg}
+                   registrationLink={`${window.location.origin}/register-employee`}
+                />
+              </ErrorBoundary>
             )}
 
-            {/* TAB: PROJECT CONTROL */}
             {activeTab === 'project_assignment' && (
-              <ProjectAssignmentForm 
-                projectData={projectData}
-                setProjectData={setProjectData}
-                employees={employees}
-                selectedEmails={selectedEmails}
-                setSelectedEmails={setSelectedEmails}
-                assignMsg={assignMsg}
-                isAssigning={isAssigning}
-                handleAssignProject={handleAssignProject}
-                handleProjectChange={handleProjectChange}
-              />
+               <ProjectAssignmentForm 
+                  employees={employees}
+                  projectData={assignForm}
+                  setProjectData={setAssignForm}
+                  selectedEmails={assignForm.employeeEmails}
+                  setSelectedEmails={(emails) => setAssignForm(prev => ({ ...prev, employeeEmails: emails }))}
+                  assignMsg={assignMsg}
+                  isAssigning={isAssigning}
+                  handleAssignProject={handleAssignProject}
+                  handleProjectChange={handleProjectChange}
+               />
             )}
 
-            {/* TAB: LEDGER */}
             {activeTab === 'ledger' && (
-              <ProjectLedger 
-                adminProjects={adminProjects}
-                expandedProject={expandedProject}
-                setExpandedProject={setExpandedProject}
-                handleDeleteProject={handleDeleteProject}
-                handleFileAction={handleFileAction}
-                setSelectedImage={setSelectedImage}
-              />
+               <ProjectLedger 
+                  adminProjects={projects}
+                  expandedProject={expandedProject}
+                  setExpandedProject={setExpandedProject}
+                  handleDeleteProject={handleDeleteProject}
+                  handleUpdateStatus={handleUpdateStatus}
+                  handleRequestDelay={handleRequestDelay}
+                  handleFileAction={handleFileAction}
+                  setSelectedImage={setSelectedImage}
+               />
             )}
 
-            {/* TAB: ATTENDANCE */}
             {activeTab === 'attendance' && (
-              <AttendanceLog 
-                dailyLogs={dailyLogs}
-                logDate={logDate}
-                setLogDate={setLogDate}
-              />
+               <AttendanceLog 
+                  logDate={logDate}
+                  setLogDate={setLogDate}
+                  dailyLogs={dailyLogs}
+               />
             )}
 
-            {/* Footer */}
-            <footer className="mt-20 pt-12 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-8 opacity-20 pb-16">
+            <footer className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-8 opacity-20 pb-12 text-center">
                <div className="flex items-center gap-4">
-                  <Layout size={20} />
-                  <p className="text-[11px] font-black uppercase tracking-[0.5em] text-white">Sector Control Protocol v8.2.1</p>
-               </div>
-               <div className="flex gap-12">
-                  <span className="text-[10px] font-black uppercase tracking-widest">Secure Link: Established</span>
-                  <span className="text-[10px] font-black uppercase tracking-widest">Asset Sync: Active</span>
+                  <p className="text-[10px] font-black uppercase tracking-[0.5em] text-heading">Secure Admin Terminal v2.0.4</p>
                </div>
             </footer>
          </div>
-
       </main>
 
       <ImagePreviewOverlay 

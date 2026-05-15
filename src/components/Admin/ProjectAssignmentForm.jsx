@@ -22,8 +22,8 @@ const ProjectAssignmentForm = ({
                 <PlusCircle className="text-brand-primary" size={32} />
              </div>
              <div>
-                <h2 className="text-3xl font-bold text-white tracking-tight">Project Control</h2>
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">Deploy New Operational Project</p>
+                <h2 className="text-3xl font-bold text-white tracking-tight">Assign Project</h2>
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">Create and assign a new project</p>
              </div>
           </div>
 
@@ -40,7 +40,7 @@ const ProjectAssignmentForm = ({
                 {/* Project Type Toggle */}
                 <div className="md:col-span-2 p-1 bg-white/5 rounded-2xl flex gap-1 border border-white/5">
                    {[
-                     { id: false, label: 'Single Person', icon: User },
+                     { id: false, label: 'Individual', icon: User },
                      { id: true, label: 'Group Project', icon: Users }
                    ].map((type) => (
                      <button
@@ -60,13 +60,13 @@ const ProjectAssignmentForm = ({
 
                 <div className="space-y-3">
                    <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                     {projectData.isGroup ? 'Assigned Team' : 'Select Personnel'}
+                     {projectData.isGroup ? 'Assigned Team' : 'Select Employee'}
                    </label>
                    {projectData.isGroup ? (
                      <div className="space-y-4">
                        <div className="flex flex-wrap gap-2 min-h-[56px] p-3 bg-white/5 border border-white/10 rounded-2xl">
                          {selectedEmails.length === 0 ? (
-                           <p className="text-[10px] text-slate-600 font-bold p-1">No Persons Selected</p>
+                           <p className="text-[10px] text-slate-600 font-bold p-1">No one selected</p>
                          ) : (
                            selectedEmails.map(email => (
                              <div key={email} className="px-3 py-1.5 bg-brand-primary/20 border border-brand-primary/30 rounded-lg flex items-center gap-2 group">
@@ -91,10 +91,14 @@ const ProjectAssignmentForm = ({
                            e.target.value = "";
                          }}
                        >
-                         <option value="">Add Team Member...</option>
+                         <option value="">Add member...</option>
                          {employees.map(emp => (
-                           <option key={emp.id} value={emp.email} disabled={selectedEmails.includes(emp.email)}>
-                             {emp.name} ({emp.email})
+                           <option 
+                             key={emp.id} 
+                             value={emp.email} 
+                             disabled={selectedEmails.includes(emp.email) || emp.activeProjectCount >= 5}
+                           >
+                             {emp.name} ({emp.email}) — {emp.activeProjectCount || 0}/5 {emp.activeProjectCount >= 5 ? '(!) FULL' : 'Active'}
                            </option>
                          ))}
                        </select>
@@ -107,20 +111,26 @@ const ProjectAssignmentForm = ({
                        required={!projectData.isGroup}
                        className="input-luxury !py-4"
                      >
-                       <option value="">Awaiting Selection...</option>
+                       <option value="">Choose an employee...</option>
                        {employees.map(emp => (
-                         <option key={emp.id} value={emp.email}>{emp.name} ({emp.email})</option>
+                         <option 
+                            key={emp.id} 
+                            value={emp.email}
+                            disabled={emp.activeProjectCount >= 5}
+                         >
+                           {emp.name} ({emp.email}) — {emp.activeProjectCount || 0}/5 {emp.activeProjectCount >= 5 ? '(!) FULL' : 'Active'}
+                         </option>
                        ))}
                      </select>
                    )}
                 </div>
 
                 <div className="space-y-3">
-                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Project Identifier</label>
+                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Project Name</label>
                    <input 
                      type="text" 
                      name="projectName"
-                     placeholder="ENTER PROJECT NAME" 
+                     placeholder="Enter project name" 
                      value={projectData.projectName}
                      onChange={handleProjectChange}
                      required
@@ -128,8 +138,20 @@ const ProjectAssignmentForm = ({
                    />
                 </div>
 
+                <div className="md:col-span-2 space-y-3">
+                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Project Brief / Description</label>
+                   <textarea 
+                     name="description"
+                     placeholder="DESCRIBE THE MISSION OBJECTIVES, DELIVERABLES, AND SPECIFICATIONS..." 
+                     value={projectData.description}
+                     onChange={handleProjectChange}
+                     required
+                     className="input-luxury !py-4 h-32 uppercase tracking-widest font-black text-[10px] custom-scrollbar"
+                   />
+                </div>
+
                 <div className="space-y-3">
-                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Commencement Date</label>
+                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Start Date</label>
                    <input 
                      type="date" 
                      name="startDate"
@@ -141,7 +163,7 @@ const ProjectAssignmentForm = ({
                 </div>
 
                 <div className="space-y-3">
-                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Operational Deadline</label>
+                   <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Deadline</label>
                    <input 
                      type="date" 
                      name="deadline"
@@ -154,7 +176,7 @@ const ProjectAssignmentForm = ({
              </div>
 
              <div className="space-y-3">
-                <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Capital Allocation (USD)</label>
+                <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Project Budget (USD)</label>
                 <div className="relative">
                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-brand-primary font-bold">$</span>
                    <input 
@@ -178,7 +200,7 @@ const ProjectAssignmentForm = ({
                    : 'bg-brand-primary hover:scale-[1.02] active:scale-[0.98] shadow-[0_20px_50px_rgba(99,102,241,0.2)]'
                }`}
              >
-                {isAssigning ? 'Processing Deployment...' : 'Initialize Deployment'}
+                {isAssigning ? 'Assigning...' : 'Assign Project'}
                 <ArrowRight size={20} className={`${isAssigning ? 'hidden' : 'group-hover:translate-x-2 transition-transform'}`} />
              </button>
           </form>

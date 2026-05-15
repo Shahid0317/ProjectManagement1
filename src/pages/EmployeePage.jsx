@@ -1,262 +1,458 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Briefcase } from 'lucide-react';
 import { 
-  getCurrentUser, getProjectsByEmployee, updateProjectStatus, 
-  submitWork, submitDelayReason, logoutUser, markAttendance, saveFinalSubmission
+  getCurrentUser, getProjectsByEmployee, submitWork, 
+  updateProjectStatus, saveFinalSubmission, logoutUser, markAttendance,
+  getTeamSubmissionStatus
 } from '../services/mockDb';
 import { uploadToCloudinary } from '../services/cloudinary';
-
-// Components
+import { compressImage } from '../utils/imageResizer';
 import ThemeToggle from '../components/ThemeToggle';
+import { Rocket, Shield, Clock, Terminal, ArrowRight, ChevronDown, ChevronUp, Menu } from 'lucide-react';
+
+// Component Imports
 import EmployeeSidebar from '../components/Employee/EmployeeSidebar';
 import EmployeeStats from '../components/Employee/EmployeeStats';
 import ProjectCard from '../components/Employee/ProjectCard';
 import ProjectBrief from '../components/Employee/ProjectBrief';
 import DailyReportForm from '../components/Employee/DailyReportForm';
 import EmployeeProjectLedger from '../components/Employee/EmployeeProjectLedger';
-
-const isNearDeadline = (deadline) => {
-  if (!deadline) return false;
-  const diff = new Date(deadline) - new Date();
-  const days = diff / (1000 * 60 * 60 * 24);
-  return days >= 0 && days <= 3;
-};
+import ErrorBoundary from '../components/ErrorBoundary';
+import LoadingOverlay from '../components/LoadingOverlay';
 
 const EmployeePage = () => {
   const navigate = useNavigate();
-  const currentUser = React.useMemo(() => getCurrentUser(), []);
-
-  // State
   const [projects, setProjects] = useState([]);
   const [activeProject, setActiveProject] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
-  
   const [description, setDescription] = useState('');
   const [imageFiles, setImageFiles] = useState([]);
   const [zipFile, setZipFile] = useState(null);
-  const [finalZip, setFinalZip] = useState(null);
-  const [finalScreenshots, setFinalScreenshots] = useState([]);
-  const [finalDescription, setFinalDescription] = useState('');
-  
-  const [isSubmitted, setIsSubmitted] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
-
-  const [delayReasonText, setDelayReasonText] = useState('');
-  const [isDelaySubmitted, setIsDelaySubmitted] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-
-  const fetchProjectData = async () => {
-    if (currentUser) {
-      const allProjects = await getProjectsByEmployee(currentUser.email);
-      setProjects(allProjects.reverse());
-      if (!activeProject && allProjects.length > 0) {
-        const firstActive = allProjects.find(p => p.status !== 'Completed') || allProjects[0];
-        setActiveProject(firstActive);
-      }
-    }
+  const [searchTerm, setSearchTerm] = useState('');
+  const [teamStatus, setTeamStatus] = useState([]);
+  const [isIndividualOpen, setIsIndividualOpen] = useState(true);
+  const [isGroupOpen, setIsGroupOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const isNearDeadline = (deadline) => {
+    if (!deadline) return false;
+    const deadlineDate = new Date(deadline);
+    const today = new Date();
+    const diffTime = deadlineDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays <= 3 && diffDays >= 0;
   };
 
-  const filteredProjects = projects.filter(p => {
-    const matchesSearch = p.projectName.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDate = dateFilter ? (p.startDate === dateFilter || p.deadline === dateFilter) : true;
-    return matchesSearch && matchesDate;
-  });
+  const filteredProjects = projects.filter(p => 
+    p.projectName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    String(p.id).toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  
+  const [finalDescription, setFinalDescription] = useState('');
+  const [finalScreenshots, setFinalScreenshots] = useState([]);
+  const [finalZip, setFinalZip] = useState(null);
+
+  const currentUser = React.useMemo(() => getCurrentUser(), []);
 
   useEffect(() => {
     if (!currentUser) {
       navigate('/');
       return;
     }
-    fetchProjectData();
+    const fetchProjects = async () => {
+      setIsLoading(true);
+      const data = await getProjectsByEmployee(currentUser.email);
+      setProjects(data);
+      setIsLoading(false);
+    };
+    fetchProjects();
     markAttendance();
-  }, []);
+  }, [currentUser, navigate]);
 
-  // File Handlers
+  useEffect(() => {
+    if (activeProject && Array.isArray(activeProject.employeeId) && activeProject.employeeId.length > 1) {
+      const fetchStatus = async () => {
+        const status = await getTeamSubmissionStatus(activeProject.id, activeProject.employeeId);
+        setTeamStatus(status);
+      };
+      fetchStatus();
+    } else {
+      setTeamStatus([]);
+    }
+  }, [activeProject]);
+
+  const handleSignOut = () => {
+    logoutUser();
+    navigate('/');
+  };
+
   const handleFileChange = (e) => {
     const files = Array.from(e.target.files);
     const images = files.filter(f => f.type.startsWith('image/'));
-    const zips = files.filter(f => f.type.includes('zip'));
-    if (imageFiles.length + images.length > 5) return alert("Max 5 images.");
-    if (zips.length > 1 || (zipFile && zips.length > 0)) return alert("Max 1 zip.");
-    if (images.length > 0) setImageFiles(prev => [...prev, ...images]);
+    const zips = files.filter(f => f.type === 'application/zip' || f.name.endsWith('.zip'));
+    
+    if (images.length > 0) setImageFiles(prev => [...prev, ...images].slice(0, 5));
     if (zips.length > 0) setZipFile(zips[0]);
-  };
-
-  const removeImage = (index) => setImageFiles(prev => prev.filter((_, i) => i !== index));
-  const removeZip = () => setZipFile(null);
-  const removeFinalZip = () => setFinalZip(null);
-
-  const handleFinalZipChange = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.includes('zip')) setFinalZip(file);
-    else alert("Invalid ZIP.");
   };
 
   const handleFinalScreenshotsChange = (e) => {
     const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
-    if (finalScreenshots.length + files.length > 10) return alert('Max 10 images.');
-    setFinalScreenshots(prev => [...prev, ...files]);
+    setFinalScreenshots(prev => [...prev, ...files].slice(0, 10));
   };
 
-  const removeFinalScreenshot = (idx) => setFinalScreenshots(prev => prev.filter((_, i) => i !== idx));
+  const handleFinalZipChange = (e) => {
+    const files = Array.from(e.target.files);
+    const zip = files.find(f => f.type === 'application/zip' || f.name.endsWith('.zip'));
+    if (zip) setFinalZip(zip);
+  };
 
-  // Submission Handlers
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!activeProject || !currentUser) return;
-    setIsUploading(true);
-    const uploadedFiles = [];
-    try {
-      for (let i = 0; i < imageFiles.length; i++) {
-        setUploadProgress(`UPLOADING ${i+1}/${imageFiles.length}...`);
-        const url = await uploadToCloudinary(imageFiles[i]);
-        uploadedFiles.push({ name: imageFiles[i].name, url, type: 'image' });
-      }
-      if (zipFile) {
-        setUploadProgress(`UPLOADING ARCHIVE...`);
-        const url = await uploadToCloudinary(zipFile);
-        uploadedFiles.push({ name: zipFile.name, url, type: 'zip' });
-      }
-      setUploadProgress('SYNCING...');
-      await submitWork(currentUser.email, currentUser.name, activeProject.id, activeProject.projectName, description, uploadedFiles);
-      setIsSubmitted(true);
-      setDescription(''); setImageFiles([]); setZipFile(null);
-      fetchProjectData();
-      setTimeout(() => setIsSubmitted(false), 3000);
-    } catch (err) { alert("Sync Error"); }
-    finally { setIsUploading(false); setUploadProgress(''); }
-  };
-
-  const handleStatusChange = async (newStatus, projectId = null) => {
-    const targetId = projectId || activeProject?.id;
-    if (!targetId) return;
-    if (!projectId && activeProject) setActiveProject(prev => ({ ...prev, status: newStatus }));
-    await updateProjectStatus(targetId, newStatus);
-    if (newStatus === 'Completed') {
-      const finalImageUrls = [];
-      for (const img of finalScreenshots) {
-        const url = await uploadToCloudinary(img);
-        finalImageUrls.push(url);
-      }
-      let finalZipUrl = finalZip ? await uploadToCloudinary(finalZip) : null;
-      await saveFinalSubmission(targetId, { description: finalDescription, finalImages: finalImageUrls, finalZipUrl });
-    }
-    fetchProjectData();
-  };
-
-  const handleDelaySubmit = async (e) => {
-    e.preventDefault();
     if (!activeProject) return;
-    await submitDelayReason(activeProject.id, delayReasonText);
-    setIsDelaySubmitted(true);
-    setDelayReasonText('');
-    fetchProjectData();
-    setTimeout(() => setIsDelaySubmitted(false), 3000);
+
+    setIsUploading(true);
+    setUploadProgress('Analyzing Assets...');
+    
+    try {
+      const imageUrls = [];
+      for (let i = 0; i < imageFiles.length; i++) {
+        setUploadProgress(`Compressing & Uploading Image ${i + 1}/${imageFiles.length}...`);
+        const compressedFile = await compressImage(imageFiles[i]);
+        const url = await uploadToCloudinary(compressedFile);
+        if (url) imageUrls.push(url);
+      }
+
+      let zipUrl = '';
+      if (zipFile) {
+        setUploadProgress('Uploading Archive...');
+        zipUrl = await uploadToCloudinary(zipFile);
+      }
+
+      const files = imageUrls.map(url => ({ name: 'Screenshot', url, type: 'image' }));
+      if (zipUrl) files.push({ name: 'Project Archive', url: zipUrl, type: 'zip' });
+
+      await submitWork(
+        currentUser.email,
+        currentUser.name,
+        activeProject.id,
+        activeProject.projectName,
+        description,
+        files
+      );
+      
+      if (Array.isArray(activeProject.employeeId) && activeProject.employeeId.length > 1) {
+        const status = await getTeamSubmissionStatus(activeProject.id, activeProject.employeeId);
+        setTeamStatus(status);
+      }
+      
+      setIsSubmitted(true);
+      setDescription('');
+      setImageFiles([]);
+      setZipFile(null);
+      setTimeout(() => setIsSubmitted(false), 3000);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress('');
+    }
   };
 
-  const handleSignOut = () => { logoutUser(); navigate('/'); };
+  const handleStatusUpdate = async (status) => {
+    if (!activeProject) return;
+    if (status === 'Completed') {
+      setIsUploading(true);
+      try {
+        const finalImages = [];
+        for (let i = 0; i < finalScreenshots.length; i++) {
+          const url = await uploadToCloudinary(finalScreenshots[i]);
+          if (url) finalImages.push(url);
+        }
+
+        let finalZipUrl = '';
+        if (finalZip) {
+          finalZipUrl = await uploadToCloudinary(finalZip);
+        }
+
+        const finalData = {
+          description: finalDescription,
+          finalImages,
+          finalZipUrl,
+        };
+
+        await saveFinalSubmission(activeProject.id, finalData);
+        await updateProjectStatus(activeProject.id, status);
+      } catch (error) {
+        console.error(error);
+      }
+    } else {
+      await updateProjectStatus(activeProject.id, status);
+    }
+    
+    const data = await getProjectsByEmployee(currentUser.email);
+    setProjects(data);
+    const updated = data.find(p => p.id === activeProject.id);
+    setActiveProject(updated);
+    setIsUploading(false);
+  };
 
   return (
-    <div className="min-h-screen gradient-mesh flex font-body selection:bg-brand-primary/30 selection:text-white overflow-hidden">
+    <div className="min-h-screen flex font-body selection:bg-brand-primary/30 selection:text-white overflow-hidden bg-main">
       
-      <div className="fixed inset-0 pointer-events-none opacity-20 overflow-hidden">
-         <div className="absolute -top-[10%] -left-[10%] w-[800px] h-[800px] bg-brand-primary/15 rounded-full blur-[160px] animate-float"></div>
-         <div className="absolute bottom-[20%] right-[5%] w-[600px] h-[600px] bg-brand-secondary/15 rounded-full blur-[140px] animate-float" style={{ animationDelay: '-5s' }}></div>
-      </div>
+      <EmployeeSidebar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        currentUser={currentUser} 
+        handleSignOut={handleSignOut} 
+        isOpen={isSidebarOpen}
+        setIsOpen={setIsSidebarOpen}
+      />
+      {isLoading && <LoadingOverlay message="Synchronizing Personnel Data..." />}
 
-      <EmployeeSidebar activeTab={activeTab} setActiveTab={setActiveTab} currentUser={currentUser} handleSignOut={handleSignOut} />
-
-      <main className="flex-1 relative z-10 custom-scrollbar overflow-y-auto h-screen bg-slate-950/20 backdrop-blur-3xl">
+      <main className="flex-1 relative z-10 custom-scrollbar overflow-y-auto h-screen bg-surface-main backdrop-blur-3xl">
          
-         <header className="sticky top-0 z-30 p-8 lg:p-12 flex justify-between items-center bg-slate-950/40 backdrop-blur-2xl border-b border-white/5">
-            <h1 className="text-2xl font-display font-bold text-white tracking-tighter uppercase">
-               {activeTab.replace('_', ' ')} <span className="text-brand-primary">Terminal</span>
-            </h1>
-            <div className="flex items-center gap-6">
+         <header className="sticky top-0 z-30 px-6 py-6 lg:px-12 flex justify-between items-center bg-header backdrop-blur-2xl border-b border-white/5 shadow-sm">
+            <div className="flex-1 lg:hidden">
+               <button onClick={() => setIsSidebarOpen(true)} className="text-slate-400 hover:text-white transition-colors">
+                  <Menu size={24} />
+               </button>
+            </div>
+            
+            <div className="flex items-center gap-6 flex-1">
+                <h1 className="text-2xl font-display font-bold text-heading tracking-tighter capitalize whitespace-nowrap">
+                  {activeTab} <span className="text-brand-primary">Portal</span>
+                </h1>
+            </div>
+
+            <div className="flex items-center justify-end gap-6 flex-1">
                <ThemeToggle />
-               <div className="h-10 w-px bg-white/10"></div>
-               <div className="flex flex-col items-end text-white">
-                  <p className="text-xs font-bold tabular-nums">{new Date().toLocaleDateString()}</p>
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-1">Operational Sync: 1:1</p>
+               <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
+               <div className="text-right hidden sm:block">
+                  <p className="text-[10px] font-bold text-heading tabular-nums">{new Date().toLocaleDateString()}</p>
+                   <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mt-1">Personnel Secure</p>
                </div>
             </div>
          </header>
 
-         <div className="p-8 lg:p-16 max-w-7xl mx-auto">
+         <div className="p-4 sm:p-8 lg:p-16 max-w-7xl mx-auto space-y-12">
             
             {activeTab === 'dashboard' && (
               <div className="space-y-16 animate-fadeIn">
-                 <EmployeeStats 
-                   activeCount={projects.filter(p => p.status !== 'Completed').length} 
-                   pendingCount={projects.filter(p => p.delayRequest && !p.delayReason).length} 
-                 />
-                 <section className="space-y-8">
-                    <h2 className="text-xl font-bold text-white tracking-tight">Active Project Sector</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                       {projects.length === 0 ? (
-                         <div className="col-span-full py-20 glass-card flex flex-col items-center justify-center opacity-30">
-                            <Briefcase size={48} className="mb-4 text-white" />
-                            <p className="text-[10px] font-black uppercase tracking-[0.5em] text-white">No Projects Assigned</p>
-                         </div>
-                       ) : (
-                         projects.map((p) => (
-                           <ProjectCard 
-                             key={p.id} project={p} isNearDeadline={isNearDeadline} 
-                             handleStatusChange={handleStatusChange} 
-                             setActiveProject={setActiveProject} setActiveTab={setActiveTab} 
-                           />
-                         ))
-                       )}
-                    </div>
-                 </section>
-              </div>
-            )}
-
-            {activeTab === 'work' && (
-              <div className="animate-fadeIn">
-                 {activeProject ? (
-                    <div className="grid grid-cols-1 xl:grid-cols-5 gap-10">
-                       <ProjectBrief 
-                         activeProject={activeProject} handleStatusChange={handleStatusChange} 
-                         delayReasonText={delayReasonText} setDelayReasonText={setDelayReasonText} 
-                         handleDelaySubmit={handleDelaySubmit} 
-                       />
-                       <DailyReportForm 
-                         description={description} setDescription={setDescription} 
-                         imageFiles={imageFiles} handleFileChange={handleFileChange} removeImage={removeImage} 
-                         zipFile={zipFile} removeZip={removeZip} 
-                         finalDescription={finalDescription} setFinalDescription={setFinalDescription} 
-                         finalScreenshots={finalScreenshots} handleFinalScreenshotsChange={handleFinalScreenshotsChange} removeFinalScreenshot={removeFinalScreenshot} 
-                         finalZip={finalZip} handleFinalZipChange={handleFinalZipChange} removeFinalZip={removeFinalZip} 
-                         isUploading={isUploading} uploadProgress={uploadProgress} isSubmitted={isSubmitted} 
-                         handleSubmit={handleSubmit} activeProject={activeProject} 
-                       />
-                    </div>
+                 {projects.length > 0 ? (
+                    <>
+                       <EmployeeStats projects={projects} />
+                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                          <div className="glass-card p-10 space-y-6">
+                             <div className="flex items-center gap-4 mb-4">
+                                <Clock className="text-brand-primary" size={20} />
+                                <h3 className="text-lg font-bold text-heading uppercase tracking-tight">Recent Activity</h3>
+                             </div>
+                             <div className="space-y-4 opacity-50">
+                                <p className="text-xs text-slate-500">System is ready for new logs. Select a project in the Work Console to begin.</p>
+                             </div>
+                          </div>
+                          <div className="glass-card p-10 space-y-6">
+                             <div className="flex items-center gap-4 mb-4">
+                                <Shield className="text-emerald-400" size={20} />
+                                <h3 className="text-lg font-bold text-heading uppercase tracking-tight">Security Status</h3>
+                             </div>
+                             <p className="text-xs text-emerald-500 font-black uppercase tracking-widest">End-to-End Encryption Enabled</p>
+                          </div>
+                       </div>
+                    </>
                  ) : (
-                    <div className="glass-card p-32 text-center opacity-30 flex flex-col items-center space-y-6">
-                       <Layout size={64} className="text-white" />
-                       <h3 className="text-2xl font-bold text-white uppercase tracking-tighter">Terminal Offline</h3>
-                       <button onClick={() => setActiveTab('dashboard')} className="px-10 py-4 bg-brand-primary text-white rounded-[2rem] font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all">Go to Project Sector</button>
+                    <div className="py-20 flex flex-col items-center justify-center text-center space-y-12 animate-zoomIn">
+                       <div className="relative">
+                          <div className="w-32 h-32 rounded-[3rem] bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center animate-pulse">
+                             <Rocket className="text-brand-primary" size={48} />
+                          </div>
+                          <div className="absolute -top-4 -right-4 w-12 h-12 bg-inner-box border border-white/10 rounded-2xl flex items-center justify-center shadow-2xl">
+                             <Terminal className="text-heading" size={20} />
+                          </div>
+                       </div>
+                       
+                       <div className="space-y-4 max-w-lg">
+                            <h2 className="text-4xl font-display font-bold text-heading tracking-tighter">
+                               Welcome to the <span className="text-brand-primary">Employee Portal</span>, {currentUser.name}
+                            </h2>
+                            <p className="text-sm text-slate-500 leading-relaxed">
+                               Your account is now active. Your dashboard is currently empty as no projects have been assigned to you yet.
+                            </p>
+                       </div>
+
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-3xl">
+                          <div className="glass-card-sm p-8 text-left space-y-4">
+                             <div className="w-10 h-10 rounded-xl bg-inner-box flex items-center justify-center">
+                                <Shield className="text-slate-400" size={18} />
+                             </div>
+                             <h4 className="text-xs font-bold text-heading uppercase tracking-widest">Step 1</h4>
+                             <p className="text-[10px] text-slate-500 font-medium leading-relaxed">Wait for an Admin to authorize your first project assignment.</p>
+                          </div>
+                          <div className="glass-card-sm p-8 text-left space-y-4 border-brand-primary/20 bg-brand-primary/5">
+                             <div className="w-10 h-10 rounded-xl bg-brand-primary/10 flex items-center justify-center">
+                                <Terminal className="text-brand-primary" size={18} />
+                             </div>
+                             <h4 className="text-xs font-bold text-heading uppercase tracking-widest">Step 2</h4>
+                              <p className="text-[10px] text-slate-500 font-medium leading-relaxed">Access "My Tasks" once an assignment is active.</p>
+                          </div>
+                          <div className="glass-card-sm p-8 text-left space-y-4">
+                             <div className="w-10 h-10 rounded-xl bg-inner-box flex items-center justify-center">
+                                <Clock className="text-slate-400" size={18} />
+                             </div>
+                             <h4 className="text-xs font-bold text-heading uppercase tracking-widest">Step 3</h4>
+                              <p className="text-[10px] text-slate-500 font-medium leading-relaxed">Submit daily updates and final files for review.</p>
+                          </div>
+                       </div>
+                       
+                       <p className="text-[9px] font-black text-slate-600 uppercase tracking-[0.5em] pt-8">
+                           Waiting for assigned projects...
+                       </p>
                     </div>
                  )}
               </div>
             )}
 
-            {activeTab === 'archive' && (
-              <EmployeeProjectLedger 
-                filteredProjects={filteredProjects} searchTerm={searchTerm} setSearchTerm={setSearchTerm} 
-                setActiveProject={setActiveProject} setActiveTab={setActiveTab} 
-              />
+            {activeTab === 'work' && (
+              <div className="space-y-16 animate-fadeIn">
+                 <div className="grid grid-cols-1 xl:grid-cols-5 gap-10">
+                    <div className="xl:col-span-2 space-y-8">
+                        <div className="space-y-4">
+                           <button 
+                             onClick={() => setIsIndividualOpen(!isIndividualOpen)}
+                             className="w-full flex items-center justify-between px-6 py-4 glass-card-sm border-white/5 hover:bg-white/[0.03] transition-all group"
+                           >
+                              <div className="flex items-center gap-4">
+                                 <div className="w-1.5 h-1.5 bg-brand-primary rounded-full"></div>
+                                 <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] group-hover:text-heading transition-colors">Individual Missions</h2>
+                              </div>
+                              {isIndividualOpen ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+                           </button>
+                           
+                           {isIndividualOpen && (
+                             <div className="space-y-6 animate-fadeIn">
+                                {projects.filter(p => p.status !== 'Completed' && (!Array.isArray(p.employeeId) || p.employeeId.length <= 1)).length === 0 ? (
+                                  <div className="glass-card p-8 text-center opacity-30 border-dashed">
+                                     <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">None Active</p>
+                                  </div>
+                                ) : (
+                                  projects.filter(p => p.status !== 'Completed' && (!Array.isArray(p.employeeId) || p.employeeId.length <= 1)).map(p => (
+                                    <ErrorBoundary key={p.id}>
+                                      <ProjectCard 
+                                        project={p} 
+                                        isNearDeadline={isNearDeadline}
+                                        handleStatusChange={handleStatusUpdate}
+                                        setActiveProject={setActiveProject}
+                                        setActiveTab={setActiveTab}
+                                      />
+                                    </ErrorBoundary>
+                                  ))
+                                )}
+                             </div>
+                           )}
+                        </div>
+
+                        <div className="space-y-4">
+                           <button 
+                             onClick={() => setIsGroupOpen(!isGroupOpen)}
+                             className="w-full flex items-center justify-between px-6 py-4 glass-card-sm border-white/5 hover:bg-white/[0.03] transition-all group"
+                           >
+                              <div className="flex items-center gap-4">
+                                 <div className="w-1.5 h-1.5 bg-brand-secondary rounded-full"></div>
+                                 <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] group-hover:text-heading transition-colors">Group Delegations</h2>
+                              </div>
+                              {isGroupOpen ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+                           </button>
+
+                           {isGroupOpen && (
+                             <div className="space-y-6 animate-fadeIn">
+                                {projects.filter(p => p.status !== 'Completed' && Array.isArray(p.employeeId) && p.employeeId.length > 1).length === 0 ? (
+                                  <div className="glass-card p-8 text-center opacity-30 border-dashed">
+                                     <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">None Active</p>
+                                  </div>
+                                ) : (
+                                  projects.filter(p => p.status !== 'Completed' && Array.isArray(p.employeeId) && p.employeeId.length > 1).map(p => (
+                                    <ErrorBoundary key={p.id}>
+                                      <ProjectCard 
+                                        project={p} 
+                                        isNearDeadline={isNearDeadline}
+                                        handleStatusChange={handleStatusUpdate}
+                                        setActiveProject={setActiveProject}
+                                        setActiveTab={setActiveTab}
+                                      />
+                                    </ErrorBoundary>
+                                  ))
+                                )}
+                             </div>
+                           )}
+                        </div>
+                     </div>
+
+                     <div className="xl:col-span-3">
+                        {activeProject ? (
+                          <div className="space-y-10 animate-fadeIn">
+                             <ProjectBrief 
+                                activeProject={activeProject} 
+                                handleStatusUpdate={handleStatusUpdate} 
+                                teamStatus={teamStatus}
+                              />
+                             <DailyReportForm 
+                               description={description}
+                               setDescription={setDescription}
+                               imageFiles={imageFiles}
+                               handleFileChange={handleFileChange}
+                               removeImage={(idx) => setImageFiles(prev => prev.filter((_, i) => i !== idx))}
+                               zipFile={zipFile}
+                               removeZip={() => setZipFile(null)}
+                               finalDescription={finalDescription}
+                               setFinalDescription={setFinalDescription}
+                               finalScreenshots={finalScreenshots}
+                               handleFinalScreenshotsChange={handleFinalScreenshotsChange}
+                               removeFinalScreenshot={(idx) => setFinalScreenshots(prev => prev.filter((_, i) => i !== idx))}
+                               finalZip={finalZip}
+                               handleFinalZipChange={handleFinalZipChange}
+                               removeFinalZip={() => setFinalZip(null)}
+                               isUploading={isUploading}
+                               uploadProgress={uploadProgress}
+                               isSubmitted={isSubmitted}
+                               handleSubmit={handleSubmit}
+                               activeProject={activeProject}
+                             />
+                          </div>
+                        ) : (
+                          <div className="glass-card h-[600px] flex flex-col items-center justify-center text-center p-12 border-dashed border-white/5 opacity-40">
+                             <div className="w-20 h-20 rounded-[2rem] bg-inner-box border border-white/10 flex items-center justify-center mb-8">
+                                <span className="text-heading font-black text-4xl">?</span>
+                             </div>
+                             <h3 className="text-xl font-bold text-heading mb-3">Initialize Mission Interface</h3>
+                             <p className="text-[10px] font-black uppercase tracking-widest leading-loose max-w-xs text-slate-500">Select a project from the left panel to begin operational logging and resource submission.</p>
+                          </div>
+                        )}
+                     </div>
+                  </div>
+               </div>
             )}
 
-            <footer className="mt-20 pt-12 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-8 opacity-20 pb-16 text-white">
-               <p className="text-[11px] font-black uppercase tracking-[0.5em]">Employee Nexus Terminal v9.0.4</p>
-               <div className="flex gap-12 text-[10px] font-black uppercase tracking-widest">
-                  <span>Connection: Secure</span>
-                  <span>Encryption: RSA-4096</span>
+            {activeTab === 'archive' && (
+              <ErrorBoundary>
+                <EmployeeProjectLedger 
+                  filteredProjects={filteredProjects}
+                  searchTerm={searchTerm}
+                  setSearchTerm={setSearchTerm}
+                  setActiveProject={setActiveProject}
+                  setActiveTab={setActiveTab}
+                />
+              </ErrorBoundary>
+            )}
+
+            <footer className="mt-20 pt-12 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-8 opacity-20 pb-16 text-center md:text-left">
+               <p className="text-[11px] font-black uppercase tracking-[0.5em] text-heading">Personnel Link established • Secure Sync Active</p>
+               <div className="flex gap-12">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-heading">Protocol v4.2.0</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-heading">Encrypted Session</span>
                </div>
             </footer>
          </div>
