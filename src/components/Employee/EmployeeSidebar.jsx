@@ -18,8 +18,8 @@ const EmployeeSidebar = ({ activeTab, setActiveTab, currentUser, handleSignOut, 
         ></div>
       )}
 
-      <aside className={`fixed lg:relative top-0 left-0 w-80 h-screen glass-card !rounded-none !border-y-0 !border-l-0 flex flex-col z-[70] transition-transform duration-500 lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} shrink-0`}>
-         <div className="p-10 flex items-center justify-between gap-4 mb-10">
+      <aside className={`fixed lg:relative top-0 left-0 w-80 h-screen overflow-y-auto custom-scrollbar glass-card !rounded-none !border-y-0 !border-l-0 flex flex-col z-[70] transition-transform duration-500 lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} shrink-0`}>
+         <div className="p-10 flex items-center justify-between gap-4 mb-10 shrink-0">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-brand-primary/10 border border-brand-primary/20 rounded-2xl flex items-center justify-center shadow-lg">
                  <Cpu className="text-brand-primary" size={24} />
@@ -34,7 +34,7 @@ const EmployeeSidebar = ({ activeTab, setActiveTab, currentUser, handleSignOut, 
             </button>
          </div>
 
-         <nav className="flex-1 px-6 space-y-3">
+         <nav className="flex-1 px-6 space-y-3 shrink-0">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -57,7 +57,7 @@ const EmployeeSidebar = ({ activeTab, setActiveTab, currentUser, handleSignOut, 
             ))}
          </nav>
 
-         <div className="p-8 border-t border-white/5 space-y-4">
+         <div className="p-8 border-t border-white/5 space-y-4 shrink-0">
             <div className="flex items-center gap-4 px-4 py-4 bg-inner-box border border-white/10 rounded-3xl">
                <div className="w-10 h-10 rounded-xl bg-brand-primary/20 flex items-center justify-center font-bold text-brand-primary text-xs border border-brand-primary/30">
                   {currentUser?.name?.charAt(0) || 'E'}

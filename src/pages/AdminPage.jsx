@@ -17,7 +17,8 @@ import {
   getPendingRegistrations,
   approveRegistrationRequest,
   declineRegistrationRequest,
-  getProjects
+  getProjects,
+  getAdminNameMap
 } from '../services/mockDb';
 import ThemeToggle from '../components/ThemeToggle';
 import { Menu } from 'lucide-react';
@@ -31,24 +32,35 @@ import AttendanceLog from '../components/Admin/AttendanceLog';
 import ImagePreviewOverlay from '../components/Admin/ImagePreviewOverlay';
 import StatCards from '../components/Admin/StatCards';
 import DailyReportFeed from '../components/Admin/DailyReportFeed';
+import FinalSubmissionsFeed from '../components/Admin/FinalSubmissionsFeed';
+import PendingSubmissions from '../components/Admin/PendingSubmissions';
+import ExtensionRequestsList from '../components/Admin/ExtensionRequestsList';
 import ErrorBoundary from '../components/ErrorBoundary';
 import LoadingOverlay from '../components/LoadingOverlay';
 
 const AdminPage = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('adminActiveTab') || 'overview';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('adminActiveTab', activeTab);
+  }, [activeTab]);
+
   const [projects, setProjects] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [subProjects, setSubProjects] = useState([]);
   const [pendingRegs, setPendingRegs] = useState([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Personnel Management State
   const [newEmpEmail, setNewEmpEmail] = useState('');
   const [newEmpName, setNewEmpName] = useState('');
   const [empMsg, setEmpMsg] = useState({ text: '', type: '' });
+  const [adminNameMap, setAdminNameMap] = useState({});
 
   // Project Assignment State
   const [assignForm, setAssignForm] = useState({ 
@@ -56,6 +68,7 @@ const AdminPage = () => {
     description: '',
     employeeEmail: '', // for individual
     employeeEmails: [], // for group
+    teamLead: '', // team lead for group project
     startDate: '', 
     deadline: '',
     budget: '',
@@ -77,13 +90,13 @@ const AdminPage = () => {
 
   const fetchData = async () => {
     if (!currentUser) return;
-    setIsLoading(true);
-    const [adminProjects, allProjects, employeeData, submissions, regs] = await Promise.all([
+    const [adminProjects, allProjects, employeeData, submissions, regs, nameMap] = await Promise.all([
       getProjectsByAdmin(currentUser.id),
       getProjects(),
       getPreAuthorizedUsersByRole('employee'),
       getSubmissions(currentUser),
-      getPendingRegistrations()
+      getPendingRegistrations(),
+      getAdminNameMap()
     ]);
 
     const enrichedEmployees = employeeData.map(emp => {
@@ -98,7 +111,7 @@ const AdminPage = () => {
     setEmployees(enrichedEmployees);
     setSubProjects(submissions.reverse());
     setPendingRegs(regs);
-    setIsLoading(false);
+    setAdminNameMap(nameMap);
   };
 
   const fetchDailyLogs = async () => {
@@ -168,7 +181,8 @@ const AdminPage = () => {
       assignForm.description,
       assignForm.startDate, 
       assignForm.deadline,
-      assignForm.budget
+      assignForm.budget,
+      assignForm.isGroup ? assignForm.teamLead : ""
     );
     
     setAssignMsg({ text: result.message, type: result.success ? 'success' : 'error' });
@@ -180,6 +194,7 @@ const AdminPage = () => {
         description: '',
         employeeEmail: '', 
         employeeEmails: [], 
+        teamLead: '',
         startDate: '', 
         deadline: '', 
         budget: '',
@@ -279,20 +294,50 @@ const AdminPage = () => {
          <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-10">
             
             {activeTab === 'overview' && (
-              <div className="animate-fadeIn space-y-10">
-                 <StatCards 
-                    projects={projects}
-                    subProjects={subProjects}
-                    onTabChange={setActiveTab}
-                 />
-                 <div className="grid grid-cols-1 gap-10">
-                    <DailyReportFeed 
-                       subProjects={subProjects}
-                       handleFileAction={handleFileAction}
-                    />
-                 </div>
-              </div>
-            )}
+               <div className="animate-fadeIn space-y-10">
+                  <StatCards 
+                     projects={projects}
+                     employees={employees}
+                     onTabChange={setActiveTab}
+                  />
+                  <div className="grid grid-cols-1 gap-10">
+                     <ErrorBoundary>
+                        <PendingSubmissions 
+                           employees={employees}
+                           subProjects={subProjects}
+                        />
+                     </ErrorBoundary>
+                     <ErrorBoundary>
+                        <ExtensionRequestsList 
+                           projects={projects}
+                           fetchData={fetchData}
+                        />
+                     </ErrorBoundary>
+                  </div>
+               </div>
+             )}
+
+             {activeTab === 'reports' && (
+               <div className="animate-fadeIn">
+                  <ErrorBoundary>
+                     <DailyReportFeed 
+                        subProjects={subProjects} 
+                        handleFileAction={handleFileAction}
+                     />
+                  </ErrorBoundary>
+               </div>
+             )}
+
+             {activeTab === 'final_submissions' && (
+               <div className="animate-fadeIn">
+                  <ErrorBoundary>
+                     <FinalSubmissionsFeed 
+                        projects={projects} 
+                        handleFileAction={handleFileAction}
+                     />
+                  </ErrorBoundary>
+               </div>
+             )}
 
             {activeTab === 'employees' && (
               <ErrorBoundary>
@@ -309,6 +354,7 @@ const AdminPage = () => {
                    handleApproveReg={handleApproveReg}
                    handleDeclineReg={handleDeclineReg}
                    registrationLink={`${window.location.origin}/register-employee`}
+                   adminNameMap={adminNameMap}
                 />
               </ErrorBoundary>
             )}
@@ -316,6 +362,7 @@ const AdminPage = () => {
             {activeTab === 'project_assignment' && (
                <ProjectAssignmentForm 
                   employees={employees}
+                  projects={projects}
                   projectData={assignForm}
                   setProjectData={setAssignForm}
                   selectedEmails={assignForm.employeeEmails}
@@ -324,6 +371,7 @@ const AdminPage = () => {
                   isAssigning={isAssigning}
                   handleAssignProject={handleAssignProject}
                   handleProjectChange={handleProjectChange}
+                  fetchData={fetchData}
                />
             )}
 

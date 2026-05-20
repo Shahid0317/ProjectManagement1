@@ -15,6 +15,8 @@ import GlobalAuthorityManager from '../components/Superadmin/GlobalAuthorityMana
 import GlobalProjectLedger from '../components/Superadmin/GlobalProjectLedger';
 import AdminActivityFeed from '../components/Superadmin/AdminActivityFeed';
 import DailyReportFeed from '../components/Admin/DailyReportFeed';
+import FinalSubmissionsFeed from '../components/Admin/FinalSubmissionsFeed';
+import PendingSubmissions from '../components/Admin/PendingSubmissions';
 import ImagePreviewOverlay from '../components/Admin/ImagePreviewOverlay';
 import AttendanceLog from '../components/Admin/AttendanceLog';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -36,7 +38,14 @@ const SuperadminPage = () => {
   const currentUser = React.useMemo(() => getCurrentUser(), []);
   
   // UI State
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('superadminActiveTab') || 'overview';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('superadminActiveTab', activeTab);
+  }, [activeTab]);
+
   const [expandedProject, setExpandedProject] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showStaffModal, setShowStaffModal] = useState(false);
@@ -49,10 +58,9 @@ const SuperadminPage = () => {
   const [newAdminJobRole, setNewAdminJobRole] = useState('');
   const [newAdminDomain, setNewAdminDomain] = useState('');
   const [msg, setMsg] = useState({ text: '', type: '' });
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   const fetchData = async () => {
-    setIsLoading(true);
     try {
       const [adminData, empData, projects, submissions] = await Promise.all([
         getPreAuthorizedUsersByRole('admin'),
@@ -68,7 +76,6 @@ const SuperadminPage = () => {
     } catch (error) {
       console.error("Error fetching system data:", error);
     }
-    setIsLoading(false);
   };
 
   const fetchDailyLogs = async () => {
@@ -216,11 +223,12 @@ const SuperadminPage = () => {
                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
                     <div id="daily-reports-feed" className="space-y-6">
                        <ErrorBoundary>
-                          <DailyReportFeed 
-                             subProjects={subProjects} 
-                             handleFileAction={handleFileAction}
+                          <PendingSubmissions 
+                             employees={employees}
+                             subProjects={subProjects}
                           />
                        </ErrorBoundary>
+
                     </div>
 
                     <div className="space-y-6">
@@ -233,6 +241,28 @@ const SuperadminPage = () => {
                     </div>
                  </div>
               </>
+            )}
+
+            {activeTab === 'reports' && (
+               <div className="animate-fadeIn">
+                  <ErrorBoundary>
+                     <DailyReportFeed 
+                        subProjects={subProjects} 
+                        handleFileAction={handleFileAction}
+                     />
+                  </ErrorBoundary>
+               </div>
+            )}
+
+            {activeTab === 'final_submissions' && (
+               <div className="animate-fadeIn">
+                  <ErrorBoundary>
+                     <FinalSubmissionsFeed 
+                        projects={allProjects} 
+                        handleFileAction={handleFileAction}
+                     />
+                  </ErrorBoundary>
+               </div>
             )}
 
             {activeTab === 'users' && (

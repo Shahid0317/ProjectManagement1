@@ -10,8 +10,23 @@ const ProjectLedger = ({
   handleFileAction, 
   setSelectedImage 
 }) => {
+  const [activeReopenReason, setActiveReopenReason] = React.useState(null);
   // Defensive check for projects
   const projects = Array.isArray(adminProjects) ? adminProjects : [];
+
+  const getEmployeeAssignments = (project) => {
+    if (!project) return [];
+    if (project.employeeAssignments && project.employeeAssignments.length > 0) {
+      return project.employeeAssignments;
+    }
+    const emails = Array.isArray(project.employeeId) ? project.employeeId : [project.employeeId].filter(Boolean);
+    const names = project.employeeName ? project.employeeName.split(', ') : [];
+    return emails.map((email, idx) => ({
+      email,
+      name: names[idx] || email.split('@')[0],
+      joinedDate: project.startDate || 'N/A'
+    }));
+  };
 
   return (
     <section className="glass-card p-10 lg:p-12 animate-fadeIn">
@@ -76,15 +91,32 @@ const ProjectLedger = ({
                                }
                             </div>
                          </td>
-                         <td className="py-8 px-10">
-                            <span className={`px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border whitespace-nowrap ${
-                              status === 'Completed' 
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]' 
-                                : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
-                            }`}>
-                               {status}
-                            </span>
-                         </td>
+                          <td className="py-8 px-10">
+                             <div className="flex items-center gap-2">
+                                <span className={`px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border whitespace-nowrap ${
+                                  status === 'Completed' 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]' 
+                                    : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                                }`}>
+                                   {status}
+                                </span>
+                                {p.reopenApproved && (
+                                   <span 
+                                      onClick={(e) => {
+                                         e.stopPropagation();
+                                         setActiveReopenReason({
+                                            projectName: p.projectName,
+                                            reason: p.reopenReason || 'No reason provided.'
+                                         });
+                                      }}
+                                      className="px-5 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)] rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] whitespace-nowrap cursor-pointer hover:bg-emerald-500/20 hover:scale-105 transition-all"
+                                      title="Click to view reactivation reason"
+                                   >
+                                      Re-Opened
+                                   </span>
+                                )}
+                             </div>
+                          </td>
                          <td className="py-8 px-10 font-bold text-sm text-white tabular-nums">
                             ${parseInt(p.budget || 0).toLocaleString()}
                          </td>
@@ -108,43 +140,127 @@ const ProjectLedger = ({
                             </button>
                          </td>
                       </tr>
-                      {/* Expanded Final Submission Panel */}
-                      {expandedProject === p.id && p.finalSubmission && (
-                        <tr className="border-b border-emerald-500/10">
-                          <td colSpan="6" className="px-10 py-6 bg-emerald-500/[0.03]">
-                            <div className="space-y-6 animate-fadeIn">
-                              <div className="flex items-center gap-3 mb-2">
-                                <CheckCircle className="text-emerald-400" size={16} />
-                                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Final Submission — {p.finalSubmission.completedAt}</p>
-                              </div>
-                              {p.finalSubmission.description && (
-                                <p className="text-sm text-slate-300 italic leading-relaxed border-l-2 border-emerald-500/30 pl-4">"{p.finalSubmission.description}"</p>
-                              )}
-                              {p.finalSubmission.finalImages?.length > 0 && (
-                                <div className="flex flex-wrap gap-4">
-                                  {p.finalSubmission.finalImages.map((url, i) => (
-                                    <img
-                                      key={i}
-                                      src={url}
-                                      alt={`delivery-${i}`}
-                                      className="w-24 h-24 object-cover rounded-2xl border border-emerald-500/20 hover:scale-105 transition-transform cursor-pointer shadow-lg"
-                                      onClick={(e) => { e.stopPropagation(); setSelectedImage(url); }}
-                                    />
-                                  ))}
+                      {/* Expanded Project Details Panel */}
+                      {expandedProject === p.id && (
+                        <tr className="border-b border-white/5 bg-white/[0.01]">
+                          <td colSpan="6" className="px-10 py-8">
+                             <div className="space-y-6 animate-fadeIn">
+                                {/* Project Details & Dates */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                   <div className="md:col-span-2 space-y-2">
+                                      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Project Description</h4>
+                                      <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                                         {p.description || 'No description provided.'}
+                                      </p>
+                                   </div>
+                                   <div className="space-y-3 bg-inner-box/50 border border-white/5 p-4 rounded-2xl">
+                                      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Time Manifest</h4>
+                                      <div className="flex justify-between text-[11px] py-1 border-b border-white/5">
+                                         <span className="text-slate-500 font-bold uppercase">Commenced:</span>
+                                         <span className="text-white font-bold tabular-nums">{p.startDate || 'N/A'}</span>
+                                      </div>
+                                      <div className="flex justify-between text-[11px] py-1">
+                                         <span className="text-slate-500 font-bold uppercase">Deadline:</span>
+                                         <span className="text-white font-bold tabular-nums">{p.deadline || 'N/A'}</span>
+                                      </div>
+                                   </div>
                                 </div>
-                              )}
-                              {p.finalSubmission.finalZipUrl && (
-                                <button
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    handleFileAction(e, { url: p.finalSubmission.finalZipUrl, type: 'zip', name: `${p.projectName}_final.zip` }); 
-                                  }}
-                                  className="inline-flex items-center gap-3 px-6 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[10px] font-black text-emerald-400 uppercase tracking-widest hover:bg-emerald-500/20 transition-all cursor-pointer"
-                                >
-                                  <Paperclip size={14} /> Download Final ZIP
-                                </button>
-                              )}
-                            </div>
+
+                                
+                                 {/* Team Manifest & Join Dates */}
+                                 <div className="p-6 bg-inner-box/30 border border-white/5 rounded-3xl space-y-4">
+                                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest font-bold">Team Manifest & Joined Dates</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                       {getEmployeeAssignments(p).map((assign) => (
+                                          <div key={assign.email} className="p-4 bg-inner-box/50 border border-white/5 rounded-2xl flex flex-col gap-1 relative">
+                                             <div className="flex justify-between items-start">
+                                                <span className="text-xs font-bold text-white">{assign.name}</span>
+                                                {p.teamLead === assign.email && (
+                                                   <span className="px-2 py-0.5 bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded flex items-center gap-1 shrink-0">
+                                                      Team Lead
+                                                   </span>
+                                                )}
+                                             </div>
+                                             <span className="text-[9px] text-slate-500 truncate">{assign.email}</span>
+                                             <span className="text-[9px] text-brand-primary font-bold mt-2 tabular-nums">
+                                                Joined: {assign.joinedDate}
+                                             </span>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </div>
+
+                                 {/* Delay Explanation Details */}
+                                 {p.delayReason && (
+                                    <div className="p-5 bg-red-500/10 border border-red-500/20 rounded-2xl animate-fadeIn mb-4">
+                                       <p className="text-[10px] font-black text-red-400 uppercase tracking-widest">★ Delay Explanation Submitted</p>
+                                       <p className="text-xs text-red-100 font-medium italic mt-2">
+                                          "{p.delayReason}"
+                                       </p>
+                                    </div>
+                                 )}
+
+                                 {/* Proposed Extension Details */}
+                                {p.extensionRequested && (
+                                   <div className="p-5 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
+                                      <div className="flex-1 min-w-0">
+                                         <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">★ Proposed Extension Request</p>
+                                         <p className="text-xs text-slate-300 font-semibold mt-1">
+                                            Employee proposed to complete by: <span className="text-white font-bold">{p.extensionDate}</span>
+                                         </p>
+                                         <p className="text-[10px] text-slate-500 mt-0.5">
+                                            ({p.extensionDays} days extension beyond original deadline of {p.deadline})
+                                         </p>
+                                         {p.extensionReason && (
+                                            <div className="mt-3 pt-3 border-t border-amber-500/10">
+                                               <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Reason for Extension Request:</p>
+                                               <p className="text-xs text-amber-100 font-medium italic">"{p.extensionReason}"</p>
+                                            </div>
+                                         )}
+                                      </div>
+                                      <span className="px-4 py-1.5 bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-black uppercase tracking-widest rounded-xl self-start md:self-center shrink-0">
+                                         +{p.extensionDays} Days Requested
+                                      </span>
+                                   </div>
+                                )}
+
+                                {/* Final Delivery Section */}
+                                {p.finalSubmission && (
+                                   <div className="pt-6 border-t border-white/5 space-y-4">
+                                      <div className="flex items-center gap-3">
+                                         <CheckCircle className="text-emerald-400" size={16} />
+                                         <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Final Submission — {p.finalSubmission.completedAt || 'Received'}</p>
+                                      </div>
+                                      {p.finalSubmission.description && (
+                                         <p className="text-sm text-slate-300 italic leading-relaxed border-l-2 border-emerald-500/30 pl-4">"{p.finalSubmission.description}"</p>
+                                      )}
+                                      {p.finalSubmission.finalImages?.length > 0 && (
+                                         <div className="flex flex-wrap gap-4">
+                                            {p.finalSubmission.finalImages.map((url, i) => (
+                                               <img
+                                                  key={i}
+                                                  src={url}
+                                                  alt={`delivery-${i}`}
+                                                  className="w-24 h-24 object-cover rounded-2xl border border-emerald-500/20 hover:scale-105 transition-transform cursor-pointer shadow-lg"
+                                                  onClick={(e) => { e.stopPropagation(); setSelectedImage(url); }}
+                                               />
+                                            ))}
+                                         </div>
+                                      )}
+                                      {p.finalSubmission.finalZipUrl && (
+                                         <button
+                                            onClick={(e) => { 
+                                               e.stopPropagation(); 
+                                               handleFileAction(e, { url: p.finalSubmission.finalZipUrl, type: 'zip', name: `${p.projectName}_final.zip` }); 
+                                            }}
+                                            className="inline-flex items-center gap-3 px-6 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[10px] font-black text-emerald-400 uppercase tracking-widest hover:bg-emerald-500/20 transition-all cursor-pointer"
+                                         >
+                                            <Paperclip size={14} /> Download Final ZIP
+                                         </button>
+                                      )}
+                                   </div>
+                                )}
+                             </div>
                           </td>
                         </tr>
                       )}
@@ -155,7 +271,33 @@ const ProjectLedger = ({
              </tbody>
           </table>
        </div>
-    </section>
+    
+
+{/* Reopen Reason Modal */}
+     {activeReopenReason && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fadeIn" onClick={() => setActiveReopenReason(null)}>
+           <div className="glass-card max-w-md w-full p-8 space-y-6 relative border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)]" onClick={(e) => e.stopPropagation()}>
+              <div className="space-y-2">
+                 <h3 className="text-xl font-bold text-white uppercase tracking-tight">Reopen Reason</h3>
+                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{activeReopenReason.projectName}</p>
+              </div>
+              <div className="p-6 bg-inner-box/50 border border-white/5 rounded-2xl">
+                 <p className="text-xs text-emerald-400 font-medium leading-relaxed italic">
+                    "{activeReopenReason.reason}"
+                 </p>
+              </div>
+              <button 
+                 onClick={() => setActiveReopenReason(null)}
+                 className="w-full py-4 bg-brand-primary text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-brand-primary/10"
+              >
+                 Close
+              </button>
+           </div>
+        </div>
+     )}
+     </section>
+
+     
   );
 };
 

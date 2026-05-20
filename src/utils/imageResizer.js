@@ -41,12 +41,10 @@ export const compressImage = (file, options = { maxWidth: 1200, quality: 0.7 }) 
         canvas.toBlob(
           (blob) => {
             if (blob) {
-              // Create a new File object to maintain the original filename
-              const compressedFile = new File([blob], file.name, {
-                type: 'image/jpeg',
-                lastModified: Date.now(),
-              });
-              resolve(compressedFile);
+              // Attach properties directly to the Blob for maximum cross-browser compatibility
+              blob.name = file.name;
+              blob.lastModified = Date.now();
+              resolve(blob);
             } else {
               reject(new Error('Canvas to Blob conversion failed'));
             }

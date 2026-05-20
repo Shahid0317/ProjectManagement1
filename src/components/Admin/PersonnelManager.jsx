@@ -13,13 +13,19 @@ const PersonnelManager = ({
   handleRemoveEmployee,
   handleApproveReg,
   handleDeclineReg,
-  registrationLink
+  registrationLink,
+  adminNameMap = {}
 }) => {
   const [selectedReg, setSelectedReg] = useState(null);
 
   const getInitial = (name) => {
     if (!name || typeof name !== 'string') return '?';
     return name.charAt(0).toUpperCase();
+  };
+
+  const getAdminName = (emp) => {
+    const email = (emp.adminEmail || emp.approvedBy || '').toLowerCase();
+    return adminNameMap[email] || (email ? email.split('@')[0] : 'System/Unknown');
   };
 
   return (
@@ -41,44 +47,47 @@ const PersonnelManager = ({
                 </div>
              </div>
 
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
-                {pendingRegs.map((reg) => (
-                  <div key={reg.id} className="glass-card-sm p-6 border-brand-secondary/10 hover:border-brand-secondary/30 transition-all duration-500 group">
-                     <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-4 min-w-0">
-                           <div className="w-12 h-12 rounded-2xl bg-brand-secondary/10 flex items-center justify-center font-bold text-brand-secondary text-xl border border-brand-secondary/20 shrink-0">
-                              {getInitial(reg.name)}
-                           </div>
-                           <div className="min-w-0">
-                              <p className="font-bold text-white truncate">{reg.name || 'Anonymous'}</p>
-                              <p className="text-[9px] text-slate-500 font-black uppercase truncate tracking-widest">{reg.email || 'No Email'}</p>
-                           </div>
-                        </div>
-                        <button 
-                          onClick={() => setSelectedReg(reg)}
-                          className="p-2.5 bg-white/5 border border-white/10 rounded-xl text-slate-400 hover:text-white hover:bg-brand-secondary hover:border-brand-secondary transition-all shrink-0"
-                          title="View Details"
-                        >
-                           <Eye size={16} />
-                        </button>
-                     </div>
-                     <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleApproveReg(reg.name || '', reg.email || '')}
-                          className="flex-1 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-[9px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center gap-2"
-                        >
-                           <Check size={14} /> Approve
-                        </button>
-                        <button 
-                          onClick={() => handleDeclineReg(reg.email || '')}
-                          className="py-3 px-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 hover:bg-red-500 hover:text-white transition-all"
-                        >
-                           <X size={14} />
-                        </button>
-                     </div>
-                  </div>
-                ))}
-             </div>
+              <div className="space-y-3 overflow-y-auto max-h-[350px] pr-2 custom-scrollbar relative z-10">
+                 {pendingRegs.map((reg) => (
+                   <div 
+                     key={reg.id} 
+                     className="glass-card-sm !p-3 flex items-center justify-between gap-4 border-brand-secondary/10 hover:border-brand-secondary/30 hover:bg-brand-secondary/[0.02] transition-all duration-300 group"
+                   >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                         <div className="w-9 h-9 rounded-xl bg-brand-secondary/10 flex items-center justify-center font-bold text-brand-secondary text-sm border border-brand-secondary/20 shrink-0">
+                            {getInitial(reg.name)}
+                         </div>
+                         <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-6">
+                            <p className="font-bold text-sm text-white truncate sm:w-40">{reg.name || 'Anonymous'}</p>
+                            <p className="text-[10px] text-slate-500 font-medium truncate flex-1">{reg.email || 'No Email'}</p>
+                         </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 shrink-0">
+                         <button 
+                           onClick={() => setSelectedReg(reg)}
+                           className="p-2 bg-white/5 border border-white/10 rounded-xl text-slate-400 hover:text-white hover:bg-brand-secondary hover:border-brand-secondary transition-all"
+                           title="View Details"
+                         >
+                            <Eye size={14} />
+                         </button>
+                         <button 
+                           onClick={() => handleApproveReg(reg.name || '', reg.email || '')}
+                           className="py-2 px-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-wider hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1.5"
+                         >
+                            <Check size={12} /> <span className="hidden sm:inline">Approve</span>
+                         </button>
+                         <button 
+                           onClick={() => handleDeclineReg(reg.email || '')}
+                           className="p-2 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 hover:bg-red-500 hover:text-white transition-all"
+                           title="Decline"
+                         >
+                            <X size={12} />
+                         </button>
+                      </div>
+                   </div>
+                 ))}
+              </div>
           </div>
        )}
 
@@ -159,7 +168,13 @@ const PersonnelManager = ({
                        </div>
                     </div>
                     <h4 className="font-bold text-base text-white mb-1 truncate w-full">{emp.name || 'Unknown'}</h4>
-                    <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-6 truncate w-full">{emp.email}</p>
+                    <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-3 truncate w-full">{emp.email}</p>
+                    <div className="mb-6 w-full py-1.5 px-3 bg-inner-box border border-white/5 rounded-xl">
+                       <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Under Admin</p>
+                       <p className="text-[11px] font-bold text-brand-primary truncate mt-0.5" title={emp.adminEmail || emp.approvedBy || ''}>
+                           {getAdminName(emp)}
+                        </p>
+                    </div>
                     <button 
                       onClick={() => handleRemoveEmployee(emp.email)}
                       className="w-full py-2.5 bg-red-500/5 border border-red-500/10 rounded-xl text-red-400 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100"

@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 const EmployeeRegistrationForm = () => {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+91');
   const [jobRole, setJobRole] = useState('');
   const [domain, setDomain] = useState('');
   const [gender, setGender] = useState('');
@@ -28,7 +28,7 @@ const EmployeeRegistrationForm = () => {
         setStatus({ type: 'success', message: result.message });
         setEmail('');
         setName('');
-        setPhone('');
+        setPhone('+91');
         setJobRole('');
         setDomain('');
         setGender('');
@@ -72,10 +72,10 @@ const EmployeeRegistrationForm = () => {
                 </p>
               </div>
               <button 
-                onClick={() => navigate('/')}
+                onClick={() => navigate('/', { state: { mode: 'signup' } })}
                 className="btn-primary w-full flex items-center justify-center gap-3"
               >
-                Return to Login <ArrowRight size={16} />
+                Create Account <ArrowRight size={16} />
               </button>
             </div>
           ) : (
@@ -199,6 +199,7 @@ const EmployeeRegistrationForm = () => {
                   placeholder="ADDITIONAL EXPERIENCE / COMMENTS..."
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
+                  required
                   rows="3"
                   className="input-luxury !pl-14 pt-4 text-xs min-h-[100px] resize-none"
                 ></textarea>
@@ -222,10 +223,10 @@ const EmployeeRegistrationForm = () => {
               <div className="text-center">
                 <button 
                   type="button"
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate('/', { state: { mode: 'signup' } })}
                   className="text-[9px] font-black text-slate-500 uppercase tracking-widest hover:text-brand-primary transition-colors"
                 >
-                  Return to Sign In
+                  Create Account
                 </button>
               </div>
             </form>

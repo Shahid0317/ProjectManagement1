@@ -9,7 +9,8 @@ const GlobalProjectLedger = ({
   setSelectedImage,
   handleFileAction
 }) => {
-  const [filter, setFilter] = useState('all'); // all, individual, group
+  const [filter, setFilter] = useState('all');
+  const [activeReopenReason, setActiveReopenReason] = useState(null); // all, individual, group
 
   const filteredProjects = allProjects.filter(proj => {
     const isGroup = Array.isArray(proj.employeeId) && proj.employeeId.length > 1;
@@ -100,11 +101,28 @@ const GlobalProjectLedger = ({
                                </p>
                             </td>
                             <td className="py-8 px-10">
-                               <span className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border whitespace-nowrap ${
-                                 proj.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : 'bg-brand-primary/10 text-brand-primary border-brand-primary/20'
-                               }`}>
-                                  {proj.status}
-                               </span>
+                               <div className="flex items-center gap-2">
+                                  <span className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border whitespace-nowrap ${
+                                    proj.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : 'bg-brand-primary/10 text-brand-primary border-brand-primary/20'
+                                  }`}>
+                                     {proj.status}
+                                  </span>
+                                  {proj.reopenApproved && (
+                                     <span 
+                                        onClick={(e) => {
+                                           e.stopPropagation();
+                                           setActiveReopenReason({
+                                              projectName: proj.projectName,
+                                              reason: proj.reopenReason || 'No reason provided.'
+                                           });
+                                        }}
+                                        className="px-4 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)] rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-emerald-500/20 hover:scale-105 transition-all"
+                                        title="Click to view reactivation reason"
+                                     >
+                                        Re-Opened
+                                     </span>
+                                  )}
+                               </div>
                             </td>
                             <td className="py-8 px-10 font-bold text-sm text-heading tabular-nums">
                                ${parseFloat(proj.budget).toLocaleString()}
@@ -176,7 +194,33 @@ const GlobalProjectLedger = ({
              </table>
           </div>
        </div>
-    </section>
+    
+
+{/* Reopen Reason Modal */}
+     {activeReopenReason && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fadeIn" onClick={() => setActiveReopenReason(null)}>
+           <div className="glass-card max-w-md w-full p-8 space-y-6 relative border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)]" onClick={(e) => e.stopPropagation()}>
+              <div className="space-y-2">
+                 <h3 className="text-xl font-bold text-white uppercase tracking-tight">Reopen Reason</h3>
+                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{activeReopenReason.projectName}</p>
+              </div>
+              <div className="p-6 bg-inner-box/50 border border-white/5 rounded-2xl">
+                 <p className="text-xs text-emerald-400 font-medium leading-relaxed italic">
+                    "{activeReopenReason.reason}"
+                 </p>
+              </div>
+              <button 
+                 onClick={() => setActiveReopenReason(null)}
+                 className="w-full py-4 bg-brand-primary text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-brand-primary/10"
+              >
+                 Close
+              </button>
+           </div>
+        </div>
+     )}
+     </section>
+
+     
   );
 };
 

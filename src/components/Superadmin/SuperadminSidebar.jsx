@@ -1,11 +1,13 @@
 import React from 'react';
-import { ShieldAlert, Layout, Users, Briefcase, Activity, LogOut, X } from 'lucide-react';
+import { ShieldAlert, Layout, Users, Briefcase, Activity, LogOut, X, FileCheck, Award } from 'lucide-react';
 
 const SuperadminSidebar = ({ activeTab, setActiveTab, currentUser, handleSignOut, isOpen, setIsOpen }) => {
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Layout },
     { id: 'users', label: 'Manage Users', icon: Users },
     { id: 'projects', label: 'All Projects', icon: Briefcase },
+    { id: 'reports', label: 'Daily Reports', icon: FileCheck },
+    { id: 'final_submissions', label: 'Final Reports', icon: Award },
     { id: 'logs', label: 'System Logs', icon: Activity },
   ];
 

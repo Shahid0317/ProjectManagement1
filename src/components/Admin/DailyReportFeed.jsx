@@ -1,29 +1,36 @@
 import React, { useState } from 'react';
-import { FileCheck, Image as ImageIcon, Paperclip, Users, User, X, Calendar, Shield, ExternalLink, Download } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { FileCheck, Image as ImageIcon, Paperclip, X, Calendar, Shield, ExternalLink, Download, Search } from 'lucide-react';
 
 const DailyReportFeed = ({ subProjects, handleFileAction }) => {
-  const [viewMode, setViewMode] = useState('individual'); // 'individual' or 'grouped'
   const [selectedReport, setSelectedReport] = useState(null);
+  const [searchProject, setSearchProject] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('all');
 
-  // Group submissions by projectId
-  const groupedSubmissions = subProjects.reduce((acc, sub) => {
-    const pid = sub.projectId || sub.projectName; // Fallback if no projectId
-    if (!acc[pid]) {
-      acc[pid] = {
-        projectId: pid,
-        projectName: sub.projectName,
-        reports: []
-      };
+  const monthsList = [
+    'January', 'February', 'March', 'April', 'May', 'June', 
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  // Filter submissions
+  const filteredReports = subProjects.filter(sub => {
+    const matchesProject = (sub.projectName || '').toLowerCase().includes(searchProject.toLowerCase());
+    
+    let matchesMonth = true;
+    if (selectedMonth !== 'all') {
+      const subMonth = sub.timestamp 
+        ? new Date(sub.timestamp).toLocaleString('default', { month: 'long' }) 
+        : '';
+      matchesMonth = subMonth.toLowerCase() === selectedMonth.toLowerCase();
     }
-    acc[pid].reports.push(sub);
-    return acc;
-  }, {});
-
-  const groupedArray = Object.values(groupedSubmissions);
+    
+    return matchesProject && matchesMonth;
+  });
 
   return (
     <div className="glass-card p-6 lg:p-8 relative overflow-hidden h-fit flex flex-col">
-       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-8">
+       {/* Header & Filters */}
+       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-8">
           <div className="flex items-center gap-4">
              <div className="p-3 bg-emerald-400/10 border border-emerald-400/20 rounded-xl">
                 <FileCheck className="text-emerald-400" size={24} />
@@ -34,58 +41,119 @@ const DailyReportFeed = ({ subProjects, handleFileAction }) => {
              </div>
           </div>
 
-          <div className="flex bg-inner-box p-1.5 rounded-2xl border border-white/5 gap-1 w-full sm:w-auto">
-             <button 
-               onClick={() => setViewMode('individual')}
-               className={`flex-1 sm:px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                 viewMode === 'individual' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'text-slate-500 hover:text-white'
-               }`}
-             >
-                <User size={14} /> Individual
-             </button>
-             <button 
-               onClick={() => setViewMode('grouped')}
-               className={`flex-1 sm:px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                 viewMode === 'grouped' ? 'bg-brand-secondary text-white shadow-lg shadow-brand-secondary/20' : 'text-slate-500 hover:text-white'
-               }`}
-             >
-                <Users size={14} /> Grouped
-             </button>
+          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+             {/* Search Filter */}
+             <div className="relative flex-1 sm:min-w-[240px]">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                <input 
+                  type="text"
+                  placeholder="SEARCH PROJECT..."
+                  value={searchProject}
+                  onChange={(e) => setSearchProject(e.target.value)}
+                  className="input-luxury pl-11 py-2 text-[10px] font-black tracking-wider uppercase w-full placeholder:text-slate-600"
+                />
+             </div>
+
+             {/* Month Filter */}
+             <div className="relative sm:min-w-[160px]">
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="input-luxury py-2 px-4 pr-10 text-[10px] font-black tracking-wider uppercase appearance-none cursor-pointer w-full bg-slate-950"
+                >
+                  <option value="all">ALL MONTHS</option>
+                  {monthsList.map(m => (
+                    <option key={m} value={m}>{m.toUpperCase()}</option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 text-[8px] font-black">
+                  ▼
+                </div>
+             </div>
           </div>
        </div>
        
-       <div className="flex-1 space-y-4 overflow-y-auto custom-scrollbar pr-1 max-h-[500px]">
-          {viewMode === 'individual' ? (
-             subProjects.length === 0 ? (
-               <div className="py-12 text-center opacity-30">
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em]">No reports recorded</p>
-               </div>
-             ) : (
-               subProjects.slice(0, 15).map((sub, idx) => (
-                 <IndividualReportCard 
-                    key={idx} 
-                    sub={sub} 
-                    handleFileAction={handleFileAction} 
-                    onView={() => setSelectedReport(sub)}
-                 />
-               ))
-             )
-          ) : (
-            groupedArray.length === 0 ? (
-               <div className="py-12 text-center opacity-30">
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em]">No grouped reports</p>
-               </div>
-            ) : (
-               groupedArray.map((group, idx) => (
-                 <GroupedReportCard 
-                    key={idx} 
-                    group={group} 
-                    handleFileAction={handleFileAction} 
-                    onViewReport={(sub) => setSelectedReport(sub)}
-                 />
-               ))
-            )
-          )}
+       {/* Table Feed */}
+       <div className="flex-1 overflow-x-auto custom-scrollbar pr-1 max-h-[500px]">
+          <table className="w-full text-left border-collapse">
+             <thead>
+                <tr className="border-b border-white/5">
+                   <th className="pb-4 pl-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Project</th>
+                   <th className="pb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Submitted By</th>
+                   <th className="pb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Date</th>
+                   <th className="pb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Log Entry</th>
+                   <th className="pb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Attachments</th>
+                   <th className="pb-4 pr-4 text-right text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Action</th>
+                </tr>
+             </thead>
+             <tbody className="divide-y divide-white/5">
+                {filteredReports.length === 0 ? (
+                   <tr>
+                      <td colSpan="6" className="py-16 text-center opacity-30">
+                         <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white">No reports match your filters</p>
+                      </td>
+                   </tr>
+                ) : (
+                   filteredReports.map((sub, idx) => (
+                      <tr key={idx} className="group hover:bg-white/[0.02] transition-colors">
+                         {/* Project Name */}
+                         <td className="py-5 pl-4">
+                            <p className="font-bold text-sm text-white tracking-tight group-hover:text-brand-primary transition-colors">
+                               {sub.projectName}
+                            </p>
+                         </td>
+                         {/* Submitted By */}
+                         <td className="py-5">
+                            <div className="flex items-center gap-3">
+                               <div className="w-7 h-7 rounded-lg bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-[10px] font-bold text-brand-primary shrink-0">
+                                  {sub.employeeName?.charAt(0) || 'E'}
+                               </div>
+                               <p className="text-xs font-semibold text-slate-300 truncate max-w-[120px]">{sub.employeeName}</p>
+                            </div>
+                         </td>
+                         {/* Date */}
+                         <td className="py-5">
+                            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                               <Calendar size={13} className="text-slate-500" />
+                               <span>{sub.date}</span>
+                            </div>
+                         </td>
+                         {/* Log Entry preview */}
+                         <td className="py-5 max-w-xs">
+                            <p className="text-xs text-slate-400 italic truncate pr-4" title={sub.description}>
+                               "{sub.description}"
+                            </p>
+                         </td>
+                         {/* Attachments */}
+                         <td className="py-5">
+                            <div className="flex -space-x-1.5 overflow-hidden">
+                               {sub.files?.slice(0, 3).map((f, i) => (
+                                  <FileIcon key={i} file={f} handleFileAction={handleFileAction} small={true} />
+                               ))}
+                               {sub.files?.length > 3 && (
+                                  <div className="w-6 h-6 rounded-full bg-inner-box border border-white/10 flex items-center justify-center text-[8px] font-black text-slate-400 z-10">
+                                     +{sub.files.length - 3}
+                                  </div>
+                               )}
+                               {(!sub.files || sub.files.length === 0) && (
+                                  <span className="text-[9px] text-slate-600 font-black uppercase tracking-widest">None</span>
+                               )}
+                            </div>
+                         </td>
+                         {/* Action */}
+                         <td className="py-5 pr-4 text-right">
+                            <button 
+                              onClick={() => setSelectedReport(sub)}
+                              className="px-4 py-2 bg-brand-primary/10 border border-brand-primary/20 rounded-xl text-[9px] font-black uppercase tracking-widest text-brand-primary hover:bg-brand-primary hover:text-white transition-all whitespace-nowrap"
+                            >
+                               View Report
+                            </button>
+                         </td>
+                      </tr>
+                   ))
+                )}
+             </tbody>
+          </table>
        </div>
 
        {/* Report Details Modal */}
@@ -100,90 +168,13 @@ const DailyReportFeed = ({ subProjects, handleFileAction }) => {
   );
 };
 
-const IndividualReportCard = ({ sub, handleFileAction, onView }) => (
-  <div className="glass-card-sm p-4 flex flex-col md:flex-row md:items-center justify-between gap-6 group animate-fadeIn">
-     <div className="flex items-center gap-4 min-w-0">
-        <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center font-bold text-white shrink-0">
-           {sub.employeeName?.charAt(0) || 'E'}
-        </div>
-        <div className="min-w-0">
-           <p className="font-bold text-base text-white tracking-tight truncate">{sub.projectName}</p>
-           <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5 truncate">
-              {sub.employeeName} • {sub.date}
-           </p>
-           <p className="text-[13px] text-slate-400 italic mt-2 line-clamp-1 leading-relaxed">"{sub.description}"</p>
-        </div>
-     </div>
-     
-     <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
-        <div className="flex -space-x-2 overflow-hidden">
-           {sub.files?.slice(0, 4).map((f, i) => (
-              <FileIcon key={i} file={f} handleFileAction={handleFileAction} />
-           ))}
-           {sub.files?.length > 4 && (
-             <div className="w-8 h-8 rounded-full bg-inner-box border-2 border-transparent flex items-center justify-center text-[9px] font-bold text-slate-400 z-10 relative">
-                +{sub.files.length - 4}
-             </div>
-           )}
-        </div>
-        <button 
-          onClick={onView}
-          className="px-4 py-2 bg-brand-primary/10 border border-brand-primary/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-brand-primary hover:bg-brand-primary hover:text-white transition-all whitespace-nowrap"
-        >
-          View Report
-        </button>
-     </div>
-  </div>
-);
-
-const GroupedReportCard = ({ group, handleFileAction, onViewReport }) => (
-  <div className="glass-card-sm p-5 space-y-4 animate-fadeIn border-brand-secondary/10">
-     <div className="flex justify-between items-center pb-3 border-b border-white/5">
-        <div className="flex items-center gap-4">
-           <div className="p-2.5 bg-brand-secondary/10 border border-brand-secondary/20 rounded-xl text-brand-secondary">
-              <Users size={18} />
-           </div>
-           <div>
-              <h3 className="font-bold text-base text-white uppercase tracking-tight">{group.projectName}</h3>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">{group.reports.length} Reports</p>
-           </div>
-        </div>
-     </div>
-
-     <div className="space-y-3">
-        {group.reports.slice(0, 5).map((sub, i) => (
-           <div key={i} className="flex items-center justify-between py-2 px-3 bg-white/[0.02] border border-white/5 rounded-2xl group/sub">
-              <div className="flex items-center gap-3 min-w-0">
-                 <div className="w-8 h-8 rounded-xl bg-brand-secondary/10 flex items-center justify-center text-[10px] font-bold text-brand-secondary">
-                    {sub.employeeName?.charAt(0)}
-                 </div>
-                 <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-200 truncate">{sub.employeeName}</p>
-                    <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest">{sub.date}</p>
-                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                 <button 
-                   onClick={() => onViewReport(sub)}
-                   className="p-2 text-slate-500 hover:text-brand-secondary transition-colors"
-                   title="View Full Report"
-                 >
-                    <ExternalLink size={14} />
-                 </button>
-              </div>
-           </div>
-        ))}
-     </div>
-  </div>
-);
-
 const ReportViewerModal = ({ report, onClose, handleFileAction }) => {
   const imageFiles = report.files?.filter(f => f.type === 'image') || [];
   const zipFiles = report.files?.filter(f => f.type === 'zip') || [];
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 lg:p-12 animate-fadeIn">
-       <div className="absolute inset-0 bg-backdrop/80 backdrop-blur-md" onClick={onClose}></div>
+       <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md" onClick={onClose}></div>
        
        <div className="relative modal-solid w-full max-w-3xl overflow-hidden rounded-[2.5rem] shadow-2xl flex flex-col max-h-[90vh]">
           {/* Header */}
@@ -284,7 +275,8 @@ const ReportViewerModal = ({ report, onClose, handleFileAction }) => {
              <button onClick={onClose} className="w-full btn-primary py-4">Close Report Viewer</button>
           </div>
        </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

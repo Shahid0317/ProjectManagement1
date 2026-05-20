@@ -1,6 +1,6 @@
 import { auth, db } from './firebase';
 import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc, query, where, getDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
 
 export const initDb = async () => {
   // Not strictly needed for Firestore, but we can keep it for backwards compatibility if called.
@@ -77,12 +77,29 @@ export const registerUser = async (name, email, password) => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
+    // Look up projects where employeeId array contains this email, or is equal to it
+    const projectsRef = collection(db, 'projects');
+    const pq = query(projectsRef, where('employeeId', 'array-contains', email.toLowerCase()));
+    const projectsSnap = await getDocs(pq);
+    
+    const pqLegacy = query(projectsRef, where('employeeId', '==', email.toLowerCase()));
+    const legacySnap = await getDocs(pqLegacy);
+    
+    const assignedProjectIds = new Set();
+    projectsSnap.forEach(doc => assignedProjectIds.add(doc.id));
+    legacySnap.forEach(doc => assignedProjectIds.add(doc.id));
+    
+    const projectIdsArr = Array.from(assignedProjectIds);
+    const primaryProjectId = projectIdsArr.length > 0 ? projectIdsArr[0] : '';
+
     // 3. Save to Users collection
     const userData = {
       uid: user.uid,
       email: email.toLowerCase(),
       name: authName,
-      role: role
+      role: role,
+      projectId: primaryProjectId,
+      projectIds: projectIdsArr
     };
     await setDoc(doc(db, 'users', user.uid), userData);
 
@@ -147,8 +164,17 @@ export const logoutUser = async () => {
   }
 };
 
+export const resetPassword = async (email) => {
+  try {
+    await sendPasswordResetEmail(auth, email.toLowerCase().trim());
+    return { success: true, message: 'Password reset link sent to your email.' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};
+
 // --- PROJECT MANAGEMENT ---
-export const assignProject = async (adminId, employeeEmails, projectName, description, startDate, deadline, budget) => {
+export const assignProject = async (adminId, employeeEmails, projectName, description, startDate, deadline, budget, teamLead = "") => {
   try {
     const emails = (Array.isArray(employeeEmails) ? employeeEmails : [employeeEmails])
       .filter(e => e && typeof e === 'string')
@@ -184,12 +210,20 @@ export const assignProject = async (adminId, employeeEmails, projectName, descri
       }
     }
 
+    const employeeAssignments = emails.map((email, idx) => ({
+      email,
+      name: employeeNames[idx] || email.split('@')[0],
+      joinedDate: startDate || new Date().toISOString().split('T')[0]
+    }));
+
     const newProject = {
       id: Date.now().toString(),
       adminId,
       adminEmail: getCurrentUser()?.email || adminId,
       employeeId: emails, // Stored as array for group support
       employeeName: employeeNames.join(', '), // Comma separated for display
+      employeeAssignments,
+      teamLead: teamLead || "",
       projectName,
       description,
       startDate,
@@ -202,7 +236,114 @@ export const assignProject = async (adminId, employeeEmails, projectName, descri
     };
 
     await setDoc(doc(db, 'projects', newProject.id), newProject);
+
+    // Update users documents to store the project ID
+    for (const email of emails) {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('email', '==', email));
+      const userSnap = await getDocs(q);
+      if (!userSnap.empty) {
+        const userDoc = userSnap.docs[0];
+        const userData = userDoc.data();
+        const existingProjectIds = userData.projectIds || [];
+        const newProjectIds = [...new Set([...existingProjectIds, newProject.id])];
+        await updateDoc(doc(db, 'users', userDoc.id), {
+          projectId: newProject.id,
+          projectIds: newProjectIds
+        });
+      }
+    }
+
     return { success: true, message: 'Project assigned successfully!' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+};
+
+export const addEmployeeToProject = async (projectId, employeeEmail) => {
+  try {
+    const projectRef = doc(db, 'projects', projectId);
+    const projectSnap = await getDoc(projectRef);
+    if (!projectSnap.exists()) {
+      return { success: false, message: 'Project not found.' };
+    }
+    const project = projectSnap.data();
+    const email = employeeEmail.toLowerCase().trim();
+
+    // Check if employee is already in the project
+    const currentEmails = Array.isArray(project.employeeId) 
+      ? project.employeeId 
+      : [project.employeeId].filter(Boolean);
+    if (currentEmails.map(e => e.toLowerCase()).includes(email)) {
+      return { success: false, message: 'Employee is already assigned to this project.' };
+    }
+
+    // Check Workload Limit
+    const activeProjects = await getProjectsByEmployee(email);
+    const pendingCount = activeProjects.filter(p => p.status !== 'Completed').length;
+    if (pendingCount >= 5) {
+      return { 
+        success: false, 
+        message: `Mission Aborted: ${email} has reached the maximum capacity of 5 active projects.` 
+      };
+    }
+
+    // Find employee name
+    let employeeNameStr = '';
+    const preAuthRef = doc(db, 'preAuth', email);
+    const preAuthSnap = await getDoc(preAuthRef);
+    if (preAuthSnap.exists()) {
+      employeeNameStr = preAuthSnap.data().name;
+    } else {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('email', '==', email), where('role', '==', 'employee'));
+      const userSnap = await getDocs(q);
+      if (userSnap.empty) {
+        return { success: false, message: `Employee ${email} is not authorized.` };
+      }
+      employeeNameStr = userSnap.docs[0].data().name;
+    }
+
+    // Update project fields
+    const updatedEmails = [...currentEmails, email];
+    const currentNames = project.employeeName ? project.employeeName.split(', ') : [];
+    const updatedNames = [...currentNames, employeeNameStr];
+
+    // Build/Update employeeAssignments list
+    const currentAssignments = project.employeeAssignments || currentEmails.map((e, idx) => ({
+      email: e,
+      name: currentNames[idx] || e.split('@')[0],
+      joinedDate: project.startDate || new Date().toISOString().split('T')[0]
+    }));
+    const newAssignment = {
+      email,
+      name: employeeNameStr,
+      joinedDate: new Date().toISOString().split('T')[0]
+    };
+    const updatedAssignments = [...currentAssignments, newAssignment];
+
+    await updateDoc(projectRef, {
+      employeeId: updatedEmails,
+      employeeName: updatedNames.join(', '),
+      employeeAssignments: updatedAssignments
+    });
+
+    // Update the employee's document in users to store project ID
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('email', '==', email));
+    const userSnap = await getDocs(q);
+    if (!userSnap.empty) {
+      const userDoc = userSnap.docs[0];
+      const userData = userDoc.data();
+      const existingProjectIds = userData.projectIds || [];
+      const newProjectIds = [...new Set([...existingProjectIds, projectId])];
+      await updateDoc(doc(db, 'users', userDoc.id), {
+        projectId: projectId,
+        projectIds: newProjectIds
+      });
+    }
+
+    return { success: true, message: 'Employee added to project successfully!' };
   } catch (error) {
     return { success: false, message: error.message };
   }
@@ -258,7 +399,138 @@ export const getProjectsByAdmin = async (adminId) => {
 
 export const updateProjectStatus = async (projectId, status) => {
   try {
-    await updateDoc(doc(db, 'projects', projectId), { status });
+    const updates = { status };
+    if (status === 'Completed') {
+      updates.reopenRequested = false;
+      updates.reopenApproved = false;
+      updates.reopenReason = '';
+    }
+    await updateDoc(doc(db, 'projects', projectId), updates);
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const requestProjectExtension = async (projectId, extensionDays, extensionDate, extensionReason, originalDeadline) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      extensionRequested: true,
+      extensionDays: parseInt(extensionDays) || 0,
+      extensionDate: extensionDate || '',
+      extensionReason: extensionReason || '',
+      originalDeadline: originalDeadline || ''
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const approveProjectExtension = async (projectId, newDeadline, approvedDays) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      deadline: newDeadline,
+      extensionDays: parseInt(approvedDays) || 0,
+      extensionDate: newDeadline,
+      extensionRequested: false,
+      extensionApproved: true
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const declineProjectExtension = async (projectId) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      extensionRequested: false,
+      extensionApproved: false
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const requestSubmissionPermission = async (projectId, extensionDays, extensionDate, extensionReason, originalDeadline) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      submissionRequested: true,
+      submissionApproved: false,
+      extensionDays: parseInt(extensionDays) || 0,
+      extensionDate: extensionDate || '',
+      extensionReason: extensionReason || '',
+      originalDeadline: originalDeadline || ''
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const approveSubmissionPermission = async (projectId, newDeadline, approvedDays) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      deadline: newDeadline,
+      extensionDays: parseInt(approvedDays) || 0,
+      extensionDate: newDeadline,
+      submissionApproved: true,
+      submissionRequested: false,
+      extensionRequested: false,
+      extensionApproved: true
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const declineSubmissionPermission = async (projectId) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      submissionRequested: false,
+      submissionApproved: false
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const requestProjectReopen = async (projectId, reopenReason) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      reopenRequested: true,
+      reopenReason: reopenReason || '',
+      reopenApproved: false
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const approveProjectReopen = async (projectId) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      status: 'Ongoing',
+      reopenRequested: false,
+      reopenApproved: true
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const declineProjectReopen = async (projectId) => {
+  try {
+    await updateDoc(doc(db, 'projects', projectId), { 
+      reopenRequested: false,
+      reopenApproved: false
+    });
     return true;
   } catch (error) {
     return false;
@@ -354,6 +626,7 @@ export const submitWork = async (employeeId, employeeName, projectId, projectNam
     const submissionData = {
       id: submissionId,
       employeeId,
+      userId: employeeId,
       employeeName,
       projectId,
       projectName,
@@ -445,7 +718,7 @@ export const getSubmissions = async (user) => {
       q = query(collection(db, 'submissions'), where('adminEmail', '==', user.email));
     } else {
       // Employees only see their own submissions
-      q = query(collection(db, 'submissions'), where('employeeId', '==', user.email));
+      q = query(collection(db, 'submissions'), where('employeeId', 'in', [user.uid || '', user.email]));
     }
     
     const snapshot = await getDocs(q);
@@ -567,5 +840,32 @@ export const updateProjectPaymentStatus = async (projectId, status) => {
     return { success: true, message: `Project payment status updated to ${status}.` };
   } catch (error) {
     return { success: false, message: error.message };
+  }
+};
+
+export const getAdminNameMap = async () => {
+  try {
+    const nameMap = {};
+    const preAuthSnap = await getDocs(collection(db, 'preAuth'));
+    preAuthSnap.forEach(doc => {
+      const data = doc.data();
+      if (data.email && data.name) {
+        nameMap[data.email.toLowerCase()] = data.name;
+      }
+    });
+
+    const usersSnap = await getDocs(collection(db, 'users'));
+    usersSnap.forEach(doc => {
+      const data = doc.data();
+      if (data.email && data.name) {
+        nameMap[data.email.toLowerCase()] = data.name;
+      }
+    });
+
+    nameMap['superadmin@123.com'] = 'Super Admin';
+    return nameMap;
+  } catch (error) {
+    console.error("Error building admin name map", error);
+    return {};
   }
 };
